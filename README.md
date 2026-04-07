@@ -60,6 +60,8 @@
   <a href="./docs/hi-IN/README.md"><img alt="README in हिन्दी" src="https://img.shields.io/badge/Hindi-d9d9d9"></a>
 </p>
 
+**About this fork:** This repository adds an optional [Docker Swarm (`docker stack`) deployment](docker/README.swarm.md) path: it adapts the official Compose-based setup for **single-node** Swarm, local named volumes, and Swarm configs for proxy templates—see the linked guide for prerequisites, deploy steps, and day-to-day operations.
+
 Dify is an open-source LLM app development platform. Its intuitive interface combines AI workflow, RAG pipeline, agent capabilities, model management, observability features (including [Opik](https://www.comet.com/docs/opik/integrations/dify), [Langfuse](https://docs.langfuse.com), and [Arize Phoenix](https://docs.arize.com/phoenix)) and more, letting you quickly go from prototype to production. Here's a list of the core features:
 
 ## Quick start
