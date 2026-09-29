@@ -27,7 +27,7 @@ services:
         condition: none
 
   api:
-    image: langgenius/dify-api:1.13.3
+    image: langgenius/dify-api:1.17.1
     env_file:
       - .env
     environment:
@@ -60,7 +60,7 @@ services:
         order: start-first
 
   worker:
-    image: langgenius/dify-api:1.13.3
+    image: langgenius/dify-api:1.17.1
     env_file:
       - .env
     environment:
@@ -84,7 +84,7 @@ services:
         order: start-first
 
   worker_beat:
-    image: langgenius/dify-api:1.13.3
+    image: langgenius/dify-api:1.17.1
     env_file:
       - .env
     environment:
@@ -101,9 +101,14 @@ services:
         order: start-first
 
   web:
-    image: langgenius/dify-web:1.13.3
+    image: langgenius/dify-web:1.17.1
     env_file:
       - .env
+    # Resolve o domínio público para o nginx interno (VIP na rede default),
+    # evitando que o SSR do Next.js resolva dify.dev.dti para 127.0.0.1
+    # (herdado do hosts do Windows via DNS do WSL).
+    extra_hosts:
+      - "dify.dev.dti:10.0.2.2"
     networks:
       - default
     deploy:
@@ -163,7 +168,7 @@ services:
         condition: on-failure
 
   weaviate:
-    image: semitechnologies/weaviate:1.27.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.39.2
     env_file:
       - .env
     environment:
@@ -191,7 +196,7 @@ services:
         condition: on-failure
 
   sandbox:
-    image: langgenius/dify-sandbox:0.2.14
+    image: langgenius/dify-sandbox:0.2.15
     env_file:
       - .env
     environment:
@@ -248,7 +253,7 @@ services:
         condition: on-failure
 
   plugin_daemon:
-    image: langgenius/dify-plugin-daemon:0.5.3-local
+    image: langgenius/dify-plugin-daemon:0.6.10-local
     env_file:
       - .env
     environment:
