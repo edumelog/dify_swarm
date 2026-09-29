@@ -49,10 +49,8 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      default:
-        aliases:
-          - dify-api
-      ssrf_proxy_network:
+      - default
+      - ssrf_proxy_network
     deploy:
       replicas: 1
       restart_policy:
@@ -112,9 +110,7 @@ services:
     extra_hosts:
       - "dify.dev.dti:10.0.2.2"
     networks:
-      default:
-        aliases:
-          - dify-web
+      - default
     deploy:
       replicas: 1
       restart_policy:
@@ -279,9 +275,7 @@ services:
         protocol: tcp
         mode: ingress
     networks:
-      default:
-        aliases:
-          - dify-plugin-daemon
+      - default
     deploy:
       replicas: 1
       restart_policy:
@@ -301,7 +295,7 @@ services:
       - source: dify_nginx_https_conf_template
         target: /etc/nginx/https.conf.template
         mode: 0444
-      - source: dify_nginx_default_conf_template_swarm
+      - source: dify_nginx_swarm_default_conf_template
         target: /etc/nginx/conf.d/default.conf.template
         mode: 0444
       - source: dify_nginx_entrypoint
@@ -312,6 +306,10 @@ services:
       - dify_certbot_live:/etc/letsencrypt/live
       - dify_certbot_conf:/etc/letsencrypt
       - dify_certbot_www:/var/www/html
+    environment:
+      # Nome da stack (ex.: dify_hmg), usado no template do nginx para montar os
+      # nomes completos dos serviços (<stack>_api, <stack>_web, <stack>_plugin_daemon).
+      DIFY_STACK_NAME: '{{index .Service.Labels "com.docker.stack.namespace"}}'
     entrypoint:
       - sh
       - -c
@@ -371,8 +369,8 @@ configs:
     file: ./nginx/docker-entrypoint.sh
   dify_kb_assets_conf:
     file: ./kb_assets/default.conf
-  # Template específico do Swarm (upstreams via aliases dify-api/dify-web/dify-plugin-daemon).
-  dify_nginx_default_conf_template_swarm:
+  # Template específico do Swarm (upstreams pelos nomes completos <stack>_api/_web/_plugin_daemon).
+  dify_nginx_swarm_default_conf_template:
     file: ./nginx/swarm/default.conf.template
 
 volumes:

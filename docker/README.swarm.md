@@ -150,10 +150,9 @@ Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.m
 
 O serviço `nginx` fica em duas redes: `default` (da stack) e `net_nginx_pm` (compartilhada com outras stacks). No Swarm, o nome curto de um serviço (ex.: `api`) vira alias DNS em toda rede à qual ele pertence. Se outra stack tiver um serviço chamado `api` em `net_nginx_pm`, o nginx pode resolver `api` para o serviço errado ao iniciar e passar a responder **502** (`connect() failed (111: Connection refused)` no log do nginx), com o front exibindo "Ocorreu um erro inesperado ao renderizar este componente".
 
-Por isso este stack:
+Por isso este stack usa um template de nginx próprio para Swarm, `nginx/swarm/default.conf.template`, que aponta para os **nomes completos** dos serviços (`${DIFY_STACK_NAME}_api`, `${DIFY_STACK_NAME}_web`, `${DIFY_STACK_NAME}_plugin_daemon`). A variável `DIFY_STACK_NAME` é preenchida automaticamente pelo Swarm com o nome da stack usado no `docker stack deploy` (ex.: `dify_hmg`). O `nginx/conf.d/default.conf.template` original continua sendo usado pelo `docker-compose.yaml`.
 
-- dá aliases exclusivos na rede `default`: `dify-api`, `dify-web` e `dify-plugin-daemon`;
-- usa um template de nginx próprio para Swarm, `nginx/swarm/default.conf.template`, que aponta para esses aliases. O `nginx/conf.d/default.conf.template` original continua sendo usado pelo `docker-compose.yaml`.
+Não use `aliases` de rede para isso: no Docker 27, aliases adicionados a serviços com `update_config.order: start-first` não são registrados no DNS do Swarm, e o nginx entra em loop com `host not found in upstream`.
 
 Para diagnosticar, compare o IP do upstream no log do nginx com os VIPs dos serviços:
 
