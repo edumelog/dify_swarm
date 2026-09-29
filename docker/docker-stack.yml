@@ -104,11 +104,18 @@ services:
     image: langgenius/dify-web:1.17.1
     env_file:
       - .env
-    # Resolve o domínio público para o nginx interno (VIP na rede default),
-    # evitando que o SSR do Next.js resolva dify.dev.dti para 127.0.0.1
-    # (herdado do hosts do Windows via DNS do WSL).
+    environment:
+      # CA interna usada pelo SSR do Next.js ao chamar o domínio público via HTTPS.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/dify/extra-ca.pem
+    configs:
+      - source: dify_web_extra_ca
+        target: /etc/ssl/dify/extra-ca.pem
+        mode: 0444
+    # O domínio público (ex.: *.dti) só existe no hosts de quem navega; o SSR do
+    # Next.js dentro do container precisa desta entrada para chamar CONSOLE_API_URL.
+    # dev (WSL): dify.dev.dti -> VIP do nginx interno; hmg: dify.hmg.dti -> IP do host (NPM).
     extra_hosts:
-      - "dify.dev.dti:10.0.2.2"
+      - "${DIFY_PUBLIC_HOST:-dify.dev.dti}:${DIFY_PUBLIC_HOST_IP:-10.0.2.2}"
     networks:
       - default
     deploy:
@@ -355,6 +362,10 @@ networks:
     external: true
 
 configs:
+  # Certificado público da CA interna (não versionado). Ao trocar o arquivo,
+  # renomeie este config ou remova a stack, pois configs do Swarm são imutáveis.
+  dify_web_extra_ca:
+    file: ${DIFY_EXTRA_CA_FILE:-./certs/no-extra-ca.pem}
   dify_ssrf_squid_conf_template:
     file: ./ssrf_proxy/squid.conf.template
   dify_ssrf_entrypoint:

@@ -87,15 +87,37 @@ Depois acesse:
 - `http://dify.dev.dti/install` (criação do admin)
 - `http://dify.dev.dti` (console após instalação)
 
-## 8) Conferir o `extra_hosts` do serviço `web`
+## 8) SSR do `web`: domínio público e CA interna
 
-O serviço `web` fixa `dify.dev.dti:10.0.2.2` para que o SSR do Next.js resolva o domínio para o nginx interno (e não para `127.0.0.1`, herdado do hosts do Windows via DNS do WSL). Esse IP é o VIP do `dify_nginx` na rede `dify_default` e **pode mudar** se a stack for removida e recriada. Confira:
+Os domínios `*.dti` não estão no DNS — são resolvidos pelo arquivo hosts de quem navega. Mas o SSR do Next.js, **dentro do container `web`**, também chama `CONSOLE_API_URL` (ex.: `https://dify.hmg.dti`). Sem ajuste, o log do `web` mostra `getaddrinfo ENOTFOUND` e o browser exibe "Ocorreu um erro inesperado ao renderizar este componente".
 
-```bash
-docker service inspect dify_nginx --format '{{json .Endpoint.VirtualIPs}}'
+Configure no `.env`:
+
+```env
+# Entrada de hosts injetada no container web (extra_hosts)
+DIFY_PUBLIC_HOST=dify.hmg.dti
+DIFY_PUBLIC_HOST_IP=10.100.2.25        # IP do host onde o Nginx Proxy Manager publica a 443
+
+# Certificado PÚBLICO da CA interna que assina *.hmg.dti (nunca a chave .key)
+DIFY_EXTRA_CA_FILE=./certs/localCA.pem
 ```
 
-Se o VIP da rede `dify_default` for diferente, atualize o `extra_hosts` no `docker-stack.yml` e faça o deploy novamente.
+E copie o certificado público da CA para `docker/certs/` (a pasta é ignorada pelo git):
+
+```bash
+cp /caminho/para/localCA.pem docker/certs/localCA.pem
+```
+
+Sem essas variáveis, o padrão é o ambiente de dev: `dify.dev.dti -> 10.0.2.2` (VIP do nginx interno) e nenhuma CA extra (`certs/no-extra-ca.pem`).
+
+O certificado vira o config `dify_web_extra_ca` e é carregado via `NODE_EXTRA_CA_CERTS`. Como configs do Swarm são imutáveis, ao **trocar** o certificado é preciso remover a stack antes do deploy (ou renomear o config).
+
+Para testar de dentro do container:
+
+```bash
+W=$(docker ps -q -f name=<stack>_web | head -1)
+docker exec $W node -e 'fetch(process.env.CONSOLE_API_URL + "/console/api/system-features").then(r => console.log(r.status)).catch(e => console.log(e.cause?.code || e.message))'
+```
 
 ## 9) Operações do dia a dia
 

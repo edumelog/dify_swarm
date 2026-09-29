@@ -174,6 +174,8 @@ docker/tidb/volumes/*
 docker/volumes/etcd/*
 docker/volumes/minio/*
 docker/volumes/milvus/*
+docker/certs/*
+!docker/certs/no-extra-ca.pem
 docker/volumes/chroma/*
 docker/volumes/opensearch/data/*
 docker/volumes/myscale/data/*
