@@ -49,8 +49,10 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - default
-      - ssrf_proxy_network
+      default:
+        aliases:
+          - dify-api
+      ssrf_proxy_network:
     deploy:
       replicas: 1
       restart_policy:
@@ -110,7 +112,9 @@ services:
     extra_hosts:
       - "dify.dev.dti:10.0.2.2"
     networks:
-      - default
+      default:
+        aliases:
+          - dify-web
     deploy:
       replicas: 1
       restart_policy:
@@ -275,7 +279,9 @@ services:
         protocol: tcp
         mode: ingress
     networks:
-      - default
+      default:
+        aliases:
+          - dify-plugin-daemon
     deploy:
       replicas: 1
       restart_policy:
@@ -295,7 +301,7 @@ services:
       - source: dify_nginx_https_conf_template
         target: /etc/nginx/https.conf.template
         mode: 0444
-      - source: dify_nginx_default_conf_template
+      - source: dify_nginx_default_conf_template_swarm
         target: /etc/nginx/conf.d/default.conf.template
         mode: 0444
       - source: dify_nginx_entrypoint
@@ -363,10 +369,11 @@ configs:
     file: ./nginx/https.conf.template
   dify_nginx_entrypoint:
     file: ./nginx/docker-entrypoint.sh
-  dify_nginx_default_conf_template:
-    file: ./nginx/conf.d/default.conf.template
   dify_kb_assets_conf:
     file: ./kb_assets/default.conf
+  # Template específico do Swarm (upstreams via aliases dify-api/dify-web/dify-plugin-daemon).
+  dify_nginx_default_conf_template_swarm:
+    file: ./nginx/swarm/default.conf.template
 
 volumes:
   dify_app_storage:

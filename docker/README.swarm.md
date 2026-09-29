@@ -1,37 +1,55 @@
 # Dify no Docker Swarm (single-node)
 
-Este guia adapta o deploy oficial por `docker compose` para `docker stack` no Swarm, focado em **1 manager** e **volumes locais**.
-
-## 1) Pre-requisitos
-
-- Docker Engine com Swarm habilitável (`docker swarm init`)
-- Docker CLI com suporte a `docker stack`
-- Host Linux com recursos minimos recomendados pelo Dify
+Este guia adapta o deploy oficial por `docker compose` para `docker stack` no Swarm, focado em **1 manager**, **volumes locais** e exposição via **Nginx Proxy Manager** (rede externa `net_nginx_pm`).
 
 Referência oficial de deploy base (Compose): [Deploy Dify with Docker Compose](https://docs.dify.ai/en/self-host/quick-start/docker-compose).
 
-## 2) Preparar ambiente
+## 1) Pré-requisitos
 
-No diretório `docker` do projeto:
+- Docker Engine com Swarm ativo (`docker swarm init`, se ainda não estiver)
+- Docker CLI com suporte a `docker stack`
+- Host Linux com os recursos mínimos recomendados pelo Dify
+- Rede overlay externa `net_nginx_pm` (compartilhada com o Nginx Proxy Manager). Se não existir:
+
+```bash
+docker network create -d overlay --attachable net_nginx_pm
+```
+
+Confira o estado do Swarm e da rede:
+
+```bash
+docker info --format '{{.Swarm.LocalNodeState}}'   # deve retornar "active"
+docker network ls --filter name=net_nginx_pm
+```
+
+## 2) Preparar o `.env`
+
+Todos os comandos abaixo são executados no diretório `docker` do projeto:
 
 ```bash
 cd docker
 cp .env.example .env
 ```
 
-Opcionalmente ajuste valores no `.env` (domínio, portas, chaves e integrações).
+Ajuste no mínimo:
 
-## 3) Inicializar Swarm
+- `SECRET_KEY` — gere com `openssl rand -base64 42`
+- Senhas e chaves padrão (os valores do `.env.example` são públicos): `DB_PASSWORD`, `REDIS_PASSWORD`, `PLUGIN_DAEMON_KEY`, `PLUGIN_DIFY_INNER_API_KEY`, `SANDBOX_API_KEY`, `WEAVIATE_API_KEY` / `WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS`
+- URLs públicas, conforme o domínio usado (ex.: `http://dify.dev.dti`): `CONSOLE_API_URL`, `CONSOLE_WEB_URL`, `APP_API_URL`, `APP_WEB_URL`, `FILES_URL`
 
-Se ainda não estiver ativo:
+## 3) Exportar o `.env` no shell
+
+O `docker stack deploy` **não carrega o `.env` automaticamente** para interpolar as variáveis `${VAR:-default}` do `docker-stack.yml`. O `env_file:` só injeta variáveis dentro dos containers. Sem exportar, o YAML usa os defaults e, por exemplo, a senha do Postgres/Redis pode divergir da que a API recebe.
 
 ```bash
-docker swarm init
+while IFS= read -r line; do [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && export "$line"; done < .env
 ```
 
-## 4) Validar manifesto
+O laço exporta cada linha `CHAVE=valor` literalmente, sem executá-la. **Não use `source .env`**: o arquivo tem valores com espaços e caracteres especiais sem aspas (ex.: `LOG_DATEFORMAT=%Y-%m-%d %H:%M:%S`, `NGINX_SSL_PROTOCOLS=TLSv1.2 TLSv1.3`), que o bash tenta interpretar como comandos.
 
-Antes do deploy, valide sintaxe/interpolação:
+Repita este passo em todo novo shell antes de um deploy.
+
+## 4) Validar o manifesto
 
 ```bash
 docker stack config -c docker-stack.yml > /dev/null
@@ -43,32 +61,48 @@ docker stack config -c docker-stack.yml > /dev/null
 docker stack deploy -c docker-stack.yml dify
 ```
 
-Observacao: para evitar problemas de bind mount no Swarm (comum no Docker Desktop/WSL), este stack usa **volumes nomeados locais** para dados e **configs do Swarm** para templates/scripts (incluindo `nginx/conf.d/default.conf.template`, necessario para o proxy HTTP funcionar na porta 80).
+Para evitar problemas de bind mount no Swarm (comum no Docker Desktop/WSL), este stack usa **volumes nomeados locais** para dados e **configs do Swarm** para templates/scripts (incluindo `nginx/conf.d/default.conf.template`).
 
 ## 6) Verificação
 
 ```bash
 docker stack services dify
-docker service ls | rg dify
-docker service ps dify_api
+docker service ps dify_init_permissions   # job único; deve terminar em "Complete"
+docker service logs -f dify_api           # no primeiro deploy, as migrations rodam aqui
 ```
 
-Se for o primeiro deploy, existe um job `init_permissions` (modo `replicated-job`) que inicializa permissões no volume de storage do Dify. Você pode checar a execução com:
+O `depends_on` não existe no Swarm: é normal `api`, `worker` e `plugin_daemon` reiniciarem algumas vezes até Postgres e Redis ficarem prontos.
+
+## 7) Expor via Nginx Proxy Manager
+
+O serviço `nginx` do Dify **não publica portas** no host — ele está apenas na rede `net_nginx_pm`. No Nginx Proxy Manager, crie um Proxy Host:
+
+- Domínio: `dify.dev.dti` (ou o domínio configurado no `.env`)
+- Scheme: `http`
+- Forward Hostname: `dify_nginx`
+- Forward Port: `80`
+
+Depois acesse:
+
+- `http://dify.dev.dti/install` (criação do admin)
+- `http://dify.dev.dti` (console após instalação)
+
+## 8) Conferir o `extra_hosts` do serviço `web`
+
+O serviço `web` fixa `dify.dev.dti:10.0.2.2` para que o SSR do Next.js resolva o domínio para o nginx interno (e não para `127.0.0.1`, herdado do hosts do Windows via DNS do WSL). Esse IP é o VIP do `dify_nginx` na rede `dify_default` e **pode mudar** se a stack for removida e recriada. Confira:
 
 ```bash
-docker service ps dify_init_permissions
+docker service inspect dify_nginx --format '{{json .Endpoint.VirtualIPs}}'
 ```
 
-Quando os serviços principais estiverem `Running`, acesse:
+Se o VIP da rede `dify_default` for diferente, atualize o `extra_hosts` no `docker-stack.yml` e faça o deploy novamente.
 
-- `http://localhost/install` (bootstrap admin)
-- `http://localhost` (console após instalação)
+## 9) Operações do dia a dia
 
-## 7) Operações do dia a dia
-
-- Atualizar stack após mudanças:
+- Aplicar mudanças no stack ou no `.env`:
 
 ```bash
+while IFS= read -r line; do [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && export "$line"; done < .env
 docker stack deploy -c docker-stack.yml dify
 ```
 
@@ -78,13 +112,22 @@ docker stack deploy -c docker-stack.yml dify
 docker service update --force dify_api
 ```
 
-- Remover stack:
+- Remover a stack (os volumes `dify_*` e os dados são preservados):
 
 ```bash
 docker stack rm dify
 ```
 
-## 8) Imagens da base de conhecimento (kb_assets)
+- Alterações em arquivos de `nginx/` ou `ssrf_proxy/`: os `configs` do Swarm são imutáveis, então um redeploy com conteúdo alterado falha. Remova a stack, aguarde a remoção terminar e faça o deploy de novo:
+
+```bash
+docker stack rm dify
+# aguarde até `docker stack ls` não listar mais "dify"
+while IFS= read -r line; do [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && export "$line"; done < .env
+docker stack deploy -c docker-stack.yml dify
+```
+
+## 10) Imagens da base de conhecimento (kb_assets)
 
 O serviço `dify_kb_assets` (nginx) serve as imagens dos manuais da base de conhecimento em `<protocolo>://<domínio-do-dify>/kb-assets/<slug>/<arquivo>`, para que o chatbot as exiba nas respostas. As imagens ficam no volume `dify_kb_assets`.
 
@@ -102,6 +145,23 @@ docker/kb_assets/publish.sh kb/<manual> <slug>
 5. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
 
 Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.md`](kb_assets/README.md).
+
+## Colisão de nomes na rede compartilhada (502 Bad Gateway)
+
+O serviço `nginx` fica em duas redes: `default` (da stack) e `net_nginx_pm` (compartilhada com outras stacks). No Swarm, o nome curto de um serviço (ex.: `api`) vira alias DNS em toda rede à qual ele pertence. Se outra stack tiver um serviço chamado `api` em `net_nginx_pm`, o nginx pode resolver `api` para o serviço errado ao iniciar e passar a responder **502** (`connect() failed (111: Connection refused)` no log do nginx), com o front exibindo "Ocorreu um erro inesperado ao renderizar este componente".
+
+Por isso este stack:
+
+- dá aliases exclusivos na rede `default`: `dify-api`, `dify-web` e `dify-plugin-daemon`;
+- usa um template de nginx próprio para Swarm, `nginx/swarm/default.conf.template`, que aponta para esses aliases. O `nginx/conf.d/default.conf.template` original continua sendo usado pelo `docker-compose.yaml`.
+
+Para diagnosticar, compare o IP do upstream no log do nginx com os VIPs dos serviços:
+
+```bash
+docker service logs --tail 50 <stack>_nginx | grep upstream
+docker service inspect <stack>_api --format '{{json .Endpoint.VirtualIPs}}'
+docker network inspect net_nginx_pm --verbose --format '{{range $k,$v := .Services}}{{$k}} VIP={{$v.VIP}}{{println}}{{end}}'
+```
 
 ## Observações importantes para Swarm
 
