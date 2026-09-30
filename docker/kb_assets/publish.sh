@@ -106,17 +106,17 @@ read_answer() {
 # Entrada: $1 slug. Saída: URL base (sem slug) em stdout; encerra com erro se inválido ou cancelado.
 ask_base_url() {
   local slug="$1" domain protocol confirm
-  domain="$(read_answer 'Domínio do Dify (ex.: dify.dev.dti, chat.hmg.dti): ')"
+  domain="$(read_answer 'Domínio do Dify (ex.: dify.dev.dti, chat.hmg.dti): ')" || exit 1
   domain="${domain,,}"
   [[ "${domain}" =~ ${DOMAIN_PATTERN} ]] \
     || fail "domínio inválido '${domain}': informe só o nome do domínio, sem protocolo nem barras (ex.: dify.dev.dti)."
-  protocol="$(read_answer 'Protocolo [http/https] (padrão: http): ')"
+  protocol="$(read_answer 'Protocolo [http/https] (padrão: http): ')" || exit 1
   protocol="${protocol,,}"
   protocol="${protocol:-http}"
   [[ "${protocol}" == "http" || "${protocol}" == "https" ]] \
     || fail "protocolo inválido '${protocol}': use http ou https."
   echo "As imagens serão publicadas em ${protocol}://${domain}${KB_ASSETS_PATH}/${slug}/" >&2
-  confirm="$(read_answer 'Confirma? [S/n]: ')"
+  confirm="$(read_answer 'Confirma? [S/n]: ')" || exit 1
   case "${confirm,,}" in
     ""|s|sim) ;;
     *) echo "Publicação cancelada." >&2; exit 1 ;;
@@ -135,7 +135,7 @@ resolve_base_url() {
       || fail "KB_ASSETS_BASE_URL inválida '${KB_ASSETS_BASE_URL}': use http:// ou https:// e o domínio (ex.: http://dify.dev.dti/kb-assets)."
     echo "${base}"
   else
-    ask_base_url "$1"
+    ask_base_url "$1" || exit 1
   fi
 }
 
@@ -207,7 +207,8 @@ main() {
   markdown="$(find_manual_markdown "${manual_dir}")"
   validate_image_refs "${images_dir}" "${markdown}"
 
-  slug_url="$(resolve_base_url "${slug}")/${slug}"
+  slug_url="$(resolve_base_url "${slug}")" || exit 1
+  slug_url="${slug_url}/${slug}"
   target="${manual_dir}/build/$(basename "${markdown}" .md).dify.md"
 
   copy_images_to_volume "${images_dir}" "${slug}" "${markdown}"

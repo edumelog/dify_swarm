@@ -236,6 +236,8 @@ test_prompt_without_answers() {
   err="$(env -u KB_ASSETS_BASE_URL "${PUBLISH}" "${dir}" promptempty 2>&1 >/dev/null </dev/null)"
   [[ $? -ne 0 ]]; check "sem respostas: código de saída diferente de 0" "$?"
   grep -qF "KB_ASSETS_BASE_URL" <<<"${err}"; check "sem respostas: erro cita KB_ASSETS_BASE_URL" "$?"
+  [[ "$(grep -c 'ERRO:' <<<"${err}")" == 1 ]]; check "sem respostas: exatamente uma linha ERRO:" "$?"
+  ! grep -qF "domínio inválido" <<<"${err}"; check "sem respostas: sem erro de domínio enganoso" "$?"
 }
 
 # test_rejects_invalid_base_url_env: KB_ASSETS_BASE_URL sem esquema http(s) deve ser recusada.
