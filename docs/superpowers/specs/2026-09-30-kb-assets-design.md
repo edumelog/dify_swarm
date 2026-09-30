@@ -70,10 +70,10 @@ prefixo `/kb-assets/`). Feito pela interface do NGPM; passo documentado no READM
 
 URL final: `http://dify.dev.dti/kb-assets/<slug>/<arquivo>`.
 
-### 3. Script `kb/publish.sh`
+### 3. Script `docker/kb_assets/publish.sh`
 
-Uso: `kb/publish.sh <pasta-do-manual> <slug>`
-(ex.: `kb/publish.sh kb/manual-office365-rag office365`).
+Uso: `docker/kb_assets/publish.sh <pasta-do-manual> <slug>`
+(ex.: `docker/kb_assets/publish.sh kb/manual-office365-rag office365`).
 
 1. Copia `<pasta>/images/*` para `/<slug>/` no volume usando um container
    temporário `busybox` (o volume pertence ao Swarm; o serviço monta em ro).
@@ -102,8 +102,8 @@ Pré-condições checadas pelo script: volume existente, pasta `images/` e um ú
 
 ### 5. Versionamento
 
-- Toda a mudança na branch `feat/kb-assets`, commits separados: spec; manual em
-  `kb/`; serviço + config nginx; script; documentação.
+- **`kb/` é conteúdo interno da CMRJ e nunca é versionado** (fica só local, ignorado pelo git).
+- Toda a mudança na branch `feat/kb-assets`, commits separados: spec; `/kb/` no `.gitignore`; serviço + config nginx; script; documentação.
 - `docker stack deploy` e merge na `main` somente com autorização do usuário.
 
 ## Tratamento de erros
