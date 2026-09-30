@@ -161,6 +161,19 @@ test_rejects_unsafe_image_names() {
   grep -qF "tela ação.png" <<<"${err}"; check "nome inseguro: erro cita o arquivo" "$?"
 }
 
+# test_publishes_only_referenced_images: imagem não referenciada no .md não pode ser publicada.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_publishes_only_referenced_images() {
+  local dir="${WORK_DIR}/onlyref"
+  make_manual "${dir}"
+  cp "${SAMPLE_PNG}" "${dir}/images/rascunho.png"
+  "${PUBLISH}" "${dir}" onlyref >/dev/null 2>&1
+  check "referenciadas: publicação com sucesso" "$?"
+  [[ "$(http_status "${BASE}/onlyref/a.png")" == 200 ]]; check "referenciadas: a.png servida" "$?"
+  [[ "$(http_status "${BASE}/onlyref/b.png")" == 200 ]]; check "referenciadas: b.png servida" "$?"
+  [[ "$(http_status "${BASE}/onlyref/rascunho.png")" == 404 ]]; check "referenciadas: rascunho.png não publicada" "$?"
+}
+
 test_happy_path
 test_republish_removes_stale_images
 test_fails_when_image_missing
@@ -168,6 +181,7 @@ test_rejects_invalid_slug
 test_fails_when_volume_missing
 test_rejects_ambiguous_markdown
 test_rejects_unsafe_image_names
+test_publishes_only_referenced_images
 
 if (( FAILURES > 0 )); then
   echo "${FAILURES} teste(s) falharam"

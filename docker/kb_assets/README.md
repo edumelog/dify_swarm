@@ -8,13 +8,15 @@ WhatsApp ou chat de site).
 
 - Cada manual fica em uma pasta própria com um `.md` e a pasta `images/`, e usa
   caminhos relativos (`![Descrição](images/arquivo.png)`).
-
-A pasta `kb/` (na raiz do repositório) é conteúdo interno, ignorado pelo git, e não é enviada ao repositório remoto.
-
+- A pasta `kb/` (na raiz do repositório) é conteúdo interno, ignorado pelo git,
+  e não é enviada ao repositório remoto.
 - O serviço `dify_kb_assets` (stack `dify`) serve as imagens em
   `http://dify.dev.dti/kb-assets/<slug>/<arquivo>`. Essas URLs não expiram.
 - O script `publish.sh` copia as imagens para o serviço e gera uma versão do
-  `.md` com URLs absolutas em `build/`, que é o arquivo enviado ao Dify.
+  `.md` com URLs absolutas, gravada em `<pasta-do-manual>/build/<nome>.dify.md`
+  (por exemplo, `kb/manual-office365-rag/build/manual-office365-rag.dify.md`),
+  que é o arquivo enviado ao Dify. Só as imagens referenciadas no `.md` são
+  publicadas.
 - O chat do Dify exibe `![...](URL)` como imagem, com ampliação ao clicar.
 
 ## Manuais
@@ -34,9 +36,12 @@ A pasta `kb/` (na raiz do repositório) é conteúdo interno, ignorado pelo git,
    ```
 
 3. No Dify, substitua o documento da base de conhecimento pelo arquivo indicado
-   pelo script (`build/<nome>.dify.md`).
+   pelo script (`<pasta-do-manual>/build/<nome>.dify.md`, por exemplo
+   `kb/manual-office365-rag/build/manual-office365-rag.dify.md`).
 
-Imagens removidas da pasta saem do ar na próxima publicação.
+Só as imagens referenciadas no `.md` são publicadas. Imagens que deixarem de
+ser referenciadas no `.md` (ou que forem removidas da pasta) saem do ar na
+próxima publicação.
 
 ## Configuração única
 
@@ -46,6 +51,20 @@ No proxy host `dify.dev.dti`, aba **Custom locations**, adicione:
 
 - Location: `/kb-assets/`
 - Scheme `http`, Forward Hostname `dify_kb_assets`, Forward Port `80`
+
+Mantenha **Cache Assets** desligado nesse proxy host. Quando ligado, o NGPM
+cria uma regra por extensão de arquivo (`location ~* ^.*\.(css|js|jpe?g|gif|png|...)$`)
+que tem prioridade sobre a custom location `/kb-assets/` e desvia as imagens
+para o Dify, que responde 404.
+
+Alternativa, se for preciso manter o Cache Assets ligado: em vez da custom
+location, use a aba **Advanced** do proxy host com:
+
+```nginx
+location ^~ /kb-assets/ {
+  proxy_pass http://dify_kb_assets:80;
+}
+```
 
 ### Base de conhecimento no Dify
 
@@ -78,5 +97,5 @@ Contexto:
 
 ```bash
 docker/kb_assets/test_default_conf.sh   # configuração do nginx
-docker/kb_assets/test_publish.sh                # script de publicação
+docker/kb_assets/test_publish.sh        # script de publicação
 ```

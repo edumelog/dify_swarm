@@ -62,26 +62,35 @@ validate_image_refs() {
   fi
 }
 
-# copy_images_to_volume: substitui o conteúdo de /<slug>/ no volume pelas imagens do manual.
+# copy_images_to_volume: substitui o conteúdo de /<slug>/ no volume pelas imagens referenciadas no .md.
+# Só os arquivos citados no Markdown são publicados (rascunhos e outros arquivos de images/ ficam de fora).
 # A cópia é feita em diretório oculto temporário e trocada no final, sem deixar órfãos.
-# Entrada: $1 pasta images/ (absoluta), $2 slug. Saída: nenhuma; encerra com erro se o volume não existir.
+# Entrada: $1 pasta images/ (absoluta), $2 slug, $3 arquivo .md. Saída: nenhuma; encerra com erro se o Docker
+# não responder ou se o volume não existir.
 copy_images_to_volume() {
-  local images_dir="$1" slug="$2"
+  local images_dir="$1" slug="$2" markdown="$3" names=()
+  docker info >/dev/null 2>&1 \
+    || fail "não foi possível falar com o Docker (daemon parado ou sem permissão)."
   docker volume inspect "${KB_ASSETS_VOLUME}" >/dev/null 2>&1 \
     || fail "volume '${KB_ASSETS_VOLUME}' não existe. Faça o deploy da stack 'dify' antes de publicar."
+  mapfile -t names < <(list_image_refs "${markdown}")
   docker run --rm \
     -v "${KB_ASSETS_VOLUME}:/dst" \
     -v "${images_dir}:/src:ro" \
     "${KB_HELPER_IMAGE}" sh -c '
       set -e
-      tmp="/dst/.$1.tmp"
+      slug="$1"
+      shift
+      tmp="/dst/.$slug.tmp"
       rm -rf "$tmp"
       mkdir -p "$tmp"
-      cp -r /src/. "$tmp/"
+      for name in "$@"; do
+        cp "/src/$name" "$tmp/$name"
+      done
       chmod -R a+rX "$tmp"
-      rm -rf "/dst/$1"
-      mv "$tmp" "/dst/$1"
-    ' sh "${slug}"
+      rm -rf "/dst/$slug"
+      mv "$tmp" "/dst/$slug"
+    ' sh "${slug}" ${names[@]+"${names[@]}"}
 }
 
 # write_dify_markdown: gera o .dify.md com images/ e ./images/ trocados pela URL pública.
@@ -103,7 +112,8 @@ verify_urls() {
   done < <(list_image_refs "${markdown}")
   if (( ${#failures[@]} > 0 )); then
     printf 'ERRO: imagem publicada não acessível: %s\n' "${failures[@]}" >&2
-    echo "Verifique o serviço dify_kb_assets e a custom location /kb-assets/ no NGPM." >&2
+    echo "Verifique o serviço dify_kb_assets, a custom location /kb-assets/ no NGPM e se" >&2
+    echo "\"Cache Assets\" está desligado no proxy host do NGPM." >&2
     exit 1
   fi
 }
@@ -123,7 +133,7 @@ main() {
   slug_url="${KB_ASSETS_BASE_URL%/}/${slug}"
   target="${manual_dir}/build/$(basename "${markdown}" .md).dify.md"
 
-  copy_images_to_volume "${images_dir}" "${slug}"
+  copy_images_to_volume "${images_dir}" "${slug}" "${markdown}"
   write_dify_markdown "${markdown}" "${target}" "${slug_url}"
   verify_urls "${slug_url}" "${markdown}"
 
