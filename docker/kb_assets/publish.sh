@@ -15,7 +15,7 @@ SLUG_PATTERN='^[a-z0-9][a-z0-9-]*$'
 IMAGE_NAME_PATTERN='^[A-Za-z0-9._-]+$'
 HOST_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?'
 DOMAIN_PATTERN="^${HOST_PATTERN}\$"
-BASE_URL_PATTERN="^https?://${HOST_PATTERN}(/.*)?\$"
+BASE_URL_PATTERN="^https?://${HOST_PATTERN}(/[^[:space:]]*)?\$"
 
 # fail: escreve uma mensagem de erro em stderr e encerra com código 1.
 # Entrada: $* mensagem. Saída: nenhuma (encerra o script).
@@ -50,33 +50,32 @@ list_image_refs() {
 }
 
 # find_unsupported_image_refs: lista imagens do Markdown que o publish.sh não sabe reescrever.
-# Entrada: $1 arquivo .md. Saída: uma linha "ERRO: ..." por problema em stdout (vazio se não houver).
+# O texto alternativo pode conter um nível de colchetes (ex.: ![a [b]](imgs/x.png)).
+# Entrada: $1 arquivo .md. Saída: uma mensagem (sem o prefixo "ERRO: ") por problema em stdout.
 find_unsupported_image_refs() {
   local markdown="$1" match target
   while IFS= read -r match; do
-    printf 'ERRO: imagem em HTML não é suportada (%s); use ![descrição](images/arquivo.png)\n' "${match}"
+    printf 'imagem em HTML não é suportada (%s); use ![descrição](images/arquivo.png)\n' "${match}"
   done < <(grep -oiE '<img[^>]*>?' "${markdown}" || true)
   while IFS= read -r match; do
-    target="${match#*](}"
+    target="${match##*](}"
     target="${target%)}"
     if [[ ! "${target}" =~ ^(\./)?images/ && ! "${target}" =~ ^https?:// ]]; then
-      printf 'ERRO: referência de imagem fora de images/ não suportada (%s); mova o arquivo para images/ e use ![descrição](images/arquivo.png)\n' "${match}"
+      printf 'referência de imagem fora de images/ não suportada (%s); mova o arquivo para images/ e use ![descrição](images/arquivo.png)\n' "${match}"
     fi
-  done < <(grep -oE '!\[[^]]*\]\([^)]*\)' "${markdown}" || true)
+  done < <(grep -oE '!\[([^][]|\[[^]]*\])*\]\([^)]*\)' "${markdown}" || true)
   while IFS= read -r match; do
-    printf 'ERRO: imagem estilo referência não suportada (%s); use a forma inline ![descrição](images/arquivo.png)\n' "${match}"
-  done < <(grep -oE '!\[[^]]*\]\[[^]]*\]' "${markdown}" || true)
+    printf 'imagem estilo referência não suportada (%s); use a forma inline ![descrição](images/arquivo.png)\n' "${match}"
+  done < <(grep -oE '!\[([^][]|\[[^]]*\])*\]\[[^]]*\]' "${markdown}" || true)
 }
 
 # validate_image_refs: recusa referências não suportadas e confere se cada referência tem nome seguro e existe em images/.
-# Entrada: $1 pasta images/, $2 arquivo .md. Saída: nenhuma; encerra com erro listando os problemas.
+# Entrada: $1 pasta images/, $2 arquivo .md. Saída: nenhuma; encerra com erro listando todos os problemas de uma vez.
 validate_image_refs() {
-  local images_dir="$1" markdown="$2" name problems=() unsupported
-  unsupported="$(find_unsupported_image_refs "${markdown}")"
-  if [[ -n "${unsupported}" ]]; then
-    echo "${unsupported}" >&2
-    exit 1
-  fi
+  local images_dir="$1" markdown="$2" name line problems=()
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] && problems+=("${line}")
+  done < <(find_unsupported_image_refs "${markdown}")
   while IFS= read -r name; do
     [[ -z "${name}" ]] && continue
     if [[ ! "${name}" =~ ${IMAGE_NAME_PATTERN} ]]; then
@@ -92,12 +91,15 @@ validate_image_refs() {
 }
 
 # read_answer: lê uma resposta do stdin exibindo o prompt em stderr.
-# Entrada: $1 texto do prompt. Saída: resposta em stdout; encerra com erro se não houver como ler.
+# Remove \r e espaços nas pontas. Entrada: $1 texto do prompt. Saída: resposta em stdout; encerra com erro se não houver como ler.
 read_answer() {
   local answer
   printf '%s' "$1" >&2
   IFS= read -r answer || fail "não foi possível ler a resposta. Para uso não interativo, defina KB_ASSETS_BASE_URL (ex.: KB_ASSETS_BASE_URL=http://dify.dev.dti/kb-assets)."
-  echo "${answer}"
+  answer="${answer//$'\r'/}"
+  answer="${answer#"${answer%%[![:space:]]*}"}"
+  answer="${answer%"${answer##*[![:space:]]}"}"
+  printf '%s\n' "${answer}"
 }
 
 # ask_base_url: pergunta domínio e protocolo e pede confirmação.
@@ -128,6 +130,7 @@ resolve_base_url() {
   local base
   if [[ -n "${KB_ASSETS_BASE_URL}" ]]; then
     base="${KB_ASSETS_BASE_URL%/}"
+    [[ "${base}" =~ ^([A-Za-z]+)(://.*)$ ]] && base="${BASH_REMATCH[1],,}${BASH_REMATCH[2]}"
     [[ "${base,,}" =~ ${BASE_URL_PATTERN} ]] \
       || fail "KB_ASSETS_BASE_URL inválida '${KB_ASSETS_BASE_URL}': use http:// ou https:// e o domínio (ex.: http://dify.dev.dti/kb-assets)."
     echo "${base}"

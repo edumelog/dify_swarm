@@ -100,7 +100,7 @@ docker/kb_assets/publish.sh kb/<manual> <slug>
 
 4. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
 
-Detalhes (formato do manual, segmentação, prompt do LLM): `kb_assets/README.md`.
+Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.md`](kb_assets/README.md).
 
 ## Observações importantes para Swarm
 

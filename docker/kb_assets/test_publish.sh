@@ -195,13 +195,15 @@ test_prompt_happy_path() {
 # test_prompt_rejects_invalid_domain: domínios inválidos devem ser recusados sem gerar build/.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_prompt_rejects_invalid_domain() {
-  local dir="${WORK_DIR}/prompt_dom" domain
+  local dir="${WORK_DIR}/prompt_dom" domain err
   make_manual "${dir}"
   for domain in "http://x.y" "dominio invalido" "a/b" ""; do
-    run_interactive "${dir}" promptdom "${domain}\n\ns\n" >/dev/null 2>&1
+    err="$(run_interactive "${dir}" promptdom "${domain}\n\ns\n" 2>&1 >/dev/null)"
     [[ $? -ne 0 ]]; check "domínio: '${domain}' recusado" "$?"
+    grep -qF "domínio inválido '${domain}'" <<<"${err}"; check "domínio: '${domain}' erro cita o motivo" "$?"
   done
   [[ ! -e "${dir}/build" ]]; check "domínio: nada gerado" "$?"
+  [[ "$(http_status "${BASE}/promptdom/a.png")" == 404 ]]; check "domínio: volume intacto" "$?"
 }
 
 # test_prompt_rejects_invalid_protocol: protocolo diferente de http/https deve ser recusado.
@@ -250,8 +252,8 @@ test_rejects_invalid_base_url_env() {
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_rejects_unsupported_image_refs() {
   local base="${WORK_DIR}/unsupported" ref expected err dir i=0
-  local refs=('<img src="images/a.png">' '![x](imgs/a.png)' '![x](../a.png)' '![x][ref]')
-  local needles=('<img' 'imgs/a.png' '../a.png' '![x][ref]')
+  local refs=('<img src="images/a.png">' '<IMG SRC="images/a.png">' '![x](imgs/a.png)' '![x](../a.png)' '![x][ref]' '![a [b]](imgs/x.png)')
+  local needles=('<img' '<IMG' 'imgs/a.png' '../a.png' '![x][ref]' '![a [b]](imgs/x.png)')
   for ref in "${refs[@]}"; do
     expected="${needles[$i]}"
     dir="${base}${i}"
@@ -264,6 +266,62 @@ test_rejects_unsupported_image_refs() {
     [[ "$(http_status "${BASE}/unsup${i}/a.png")" == 404 ]]; check "não suportada: '${ref}' volume intacto" "$?"
     i=$((i + 1))
   done
+}
+
+# test_reports_all_problems_at_once: referência não suportada e imagem ausente aparecem juntas no erro.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_reports_all_problems_at_once() {
+  local dir="${WORK_DIR}/allproblems" err
+  make_manual "${dir}"
+  printf '\n![x](imgs/a.png)\n![y](images/faltando.png)\n' >> "${dir}/manual.md"
+  err="$("${PUBLISH}" "${dir}" allprob 2>&1 >/dev/null)"
+  [[ $? -ne 0 ]]; check "todos os problemas: recusado" "$?"
+  grep -qF "imgs/a.png" <<<"${err}"; check "todos os problemas: cita a referência não suportada" "$?"
+  grep -qF "faltando.png" <<<"${err}"; check "todos os problemas: cita a imagem ausente" "$?"
+}
+
+# test_nested_brackets_alt_text: alt com colchetes em imagem válida é publicado e reescrito.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_nested_brackets_alt_text() {
+  local dir="${WORK_DIR}/nested"
+  make_manual "${dir}"
+  printf '\n![a [b]](images/a.png)\n' >> "${dir}/manual.md"
+  "${PUBLISH}" "${dir}" nested >/dev/null 2>&1
+  check "colchetes no alt: publicação com sucesso" "$?"
+  grep -qF "![a [b]](${BASE}/nested/a.png)" "${dir}/build/manual.dify.md"; check "colchetes no alt: reescrito" "$?"
+  [[ "$(http_status "${BASE}/nested/a.png")" == 200 ]]; check "colchetes no alt: a.png servida" "$?"
+}
+
+# test_prompt_answers_normalized: respostas com \r (colagem do Windows) são aceitas.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_answers_normalized() {
+  local dir="${WORK_DIR}/prompt_cr"
+  make_manual "${dir}"
+  run_interactive "${dir}" promptcr "127.0.0.1:${PORT}\r\nhttp\r\ns\r\n" >/dev/null 2>&1
+  check "CR: respostas com \\r aceitas" "$?"
+  [[ "$(http_status "${BASE}/promptcr/a.png")" == 200 ]]; check "CR: a.png servida" "$?"
+}
+
+# test_prompt_confirm_dash_n: resposta '-n' na confirmação não pode virar "sim".
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_confirm_dash_n() {
+  local dir="${WORK_DIR}/prompt_dashn"
+  make_manual "${dir}"
+  run_interactive "${dir}" promptdashn "127.0.0.1:${PORT}\n\n-n\n" >/dev/null 2>&1
+  [[ $? -ne 0 ]]; check "-n: confirmação '-n' cancela" "$?"
+  [[ ! -e "${dir}/build" ]]; check "-n: sem build/" "$?"
+}
+
+# test_base_url_env_normalization: esquema em maiúsculas é aceito e espaço no caminho é recusado.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_base_url_env_normalization() {
+  local dir="${WORK_DIR}/envnorm"
+  make_manual "${dir}"
+  KB_ASSETS_BASE_URL="HTTP://127.0.0.1:${PORT}/kb-assets" "${PUBLISH}" "${dir}" envnorm >/dev/null 2>&1
+  check "base url: esquema em maiúsculas aceito" "$?"
+  grep -qF "](http://127.0.0.1:${PORT}/kb-assets/envnorm/a.png)" "${dir}/build/manual.dify.md"; check "base url: esquema normalizado" "$?"
+  KB_ASSETS_BASE_URL="http://127.0.0.1:${PORT}/kb assets" "${PUBLISH}" "${dir}" envspace >/dev/null 2>&1
+  [[ $? -ne 0 ]]; check "base url: espaço no caminho recusado" "$?"
 }
 
 test_happy_path
@@ -281,6 +339,11 @@ test_prompt_cancel
 test_prompt_without_answers
 test_rejects_invalid_base_url_env
 test_rejects_unsupported_image_refs
+test_reports_all_problems_at_once
+test_nested_brackets_alt_text
+test_prompt_answers_normalized
+test_prompt_confirm_dash_n
+test_base_url_env_normalization
 
 if (( FAILURES > 0 )); then
   echo "${FAILURES} teste(s) falharam"
