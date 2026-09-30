@@ -242,3 +242,6 @@ scripts/stress-test/reports/
 
 # Code Agent Folder
 .qoder/*
+
+# Manuais da base de conhecimento do chatbot: conteúdo interno da CMRJ, não versionar
+/kb/
