@@ -84,6 +84,24 @@ docker service update --force dify_api
 docker stack rm dify
 ```
 
+## 8) Imagens da base de conhecimento (kb_assets)
+
+O serviço `dify_kb_assets` (nginx) serve as imagens dos manuais da base de conhecimento em `<protocolo>://<domínio-do-dify>/kb-assets/<slug>/<arquivo>`, para que o chatbot as exiba nas respostas. As imagens ficam no volume `dify_kb_assets`.
+
+Ordem de uso:
+
+1. Faça o deploy da stack (seção 5), que já inclui o serviço `dify_kb_assets`.
+2. No NGPM, crie a custom location `/kb-assets/` do proxy host do Dify apontando para `dify_kb_assets:80`.
+3. Publique o manual, respondendo às perguntas de domínio e protocolo:
+
+```bash
+docker/kb_assets/publish.sh kb/<manual> <slug>
+```
+
+4. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
+
+Detalhes (formato do manual, segmentação, prompt do LLM): `kb_assets/README.md`.
+
 ## Observações importantes para Swarm
 
 - `depends_on` do Compose não controla ordem no Swarm; os serviços sobem de forma independente.
