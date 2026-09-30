@@ -3,14 +3,19 @@
 # kb_assets e gera a versão do Markdown com URLs absolutas para ingestão no Dify.
 #
 # Uso: docker/kb_assets/publish.sh <pasta-do-manual> <slug>
-# Variáveis: KB_ASSETS_VOLUME, KB_ASSETS_BASE_URL, KB_HELPER_IMAGE
+# Variáveis: KB_ASSETS_VOLUME, KB_HELPER_IMAGE e, opcionalmente, KB_ASSETS_BASE_URL
+# (ex.: http://dify.dev.dti/kb-assets). Sem KB_ASSETS_BASE_URL, o domínio é perguntado.
 set -euo pipefail
 
 KB_ASSETS_VOLUME="${KB_ASSETS_VOLUME:-dify_dify_kb_assets}"
-KB_ASSETS_BASE_URL="${KB_ASSETS_BASE_URL:-http://dify.dev.dti/kb-assets}"
+KB_ASSETS_BASE_URL="${KB_ASSETS_BASE_URL:-}"
+KB_ASSETS_PATH="/kb-assets"
 KB_HELPER_IMAGE="${KB_HELPER_IMAGE:-busybox:latest}"
 SLUG_PATTERN='^[a-z0-9][a-z0-9-]*$'
 IMAGE_NAME_PATTERN='^[A-Za-z0-9._-]+$'
+HOST_PATTERN='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?'
+DOMAIN_PATTERN="^${HOST_PATTERN}\$"
+BASE_URL_PATTERN="^https?://${HOST_PATTERN}(/.*)?\$"
 
 # fail: escreve uma mensagem de erro em stderr e encerra com código 1.
 # Entrada: $* mensagem. Saída: nenhuma (encerra o script).
@@ -44,10 +49,34 @@ list_image_refs() {
     | sort -u || true
 }
 
-# validate_image_refs: confere se cada referência tem nome seguro e existe em images/.
+# find_unsupported_image_refs: lista imagens do Markdown que o publish.sh não sabe reescrever.
+# Entrada: $1 arquivo .md. Saída: uma linha "ERRO: ..." por problema em stdout (vazio se não houver).
+find_unsupported_image_refs() {
+  local markdown="$1" match target
+  while IFS= read -r match; do
+    printf 'ERRO: imagem em HTML não é suportada (%s); use ![descrição](images/arquivo.png)\n' "${match}"
+  done < <(grep -oiE '<img[^>]*>?' "${markdown}" || true)
+  while IFS= read -r match; do
+    target="${match#*](}"
+    target="${target%)}"
+    if [[ ! "${target}" =~ ^(\./)?images/ && ! "${target}" =~ ^https?:// ]]; then
+      printf 'ERRO: referência de imagem fora de images/ não suportada (%s); mova o arquivo para images/ e use ![descrição](images/arquivo.png)\n' "${match}"
+    fi
+  done < <(grep -oE '!\[[^]]*\]\([^)]*\)' "${markdown}" || true)
+  while IFS= read -r match; do
+    printf 'ERRO: imagem estilo referência não suportada (%s); use a forma inline ![descrição](images/arquivo.png)\n' "${match}"
+  done < <(grep -oE '!\[[^]]*\]\[[^]]*\]' "${markdown}" || true)
+}
+
+# validate_image_refs: recusa referências não suportadas e confere se cada referência tem nome seguro e existe em images/.
 # Entrada: $1 pasta images/, $2 arquivo .md. Saída: nenhuma; encerra com erro listando os problemas.
 validate_image_refs() {
-  local images_dir="$1" markdown="$2" name problems=()
+  local images_dir="$1" markdown="$2" name problems=() unsupported
+  unsupported="$(find_unsupported_image_refs "${markdown}")"
+  if [[ -n "${unsupported}" ]]; then
+    echo "${unsupported}" >&2
+    exit 1
+  fi
   while IFS= read -r name; do
     [[ -z "${name}" ]] && continue
     if [[ ! "${name}" =~ ${IMAGE_NAME_PATTERN} ]]; then
@@ -59,6 +88,51 @@ validate_image_refs() {
   if (( ${#problems[@]} > 0 )); then
     printf 'ERRO: %s\n' "${problems[@]}" >&2
     exit 1
+  fi
+}
+
+# read_answer: lê uma resposta do stdin exibindo o prompt em stderr.
+# Entrada: $1 texto do prompt. Saída: resposta em stdout; encerra com erro se não houver como ler.
+read_answer() {
+  local answer
+  printf '%s' "$1" >&2
+  IFS= read -r answer || fail "não foi possível ler a resposta. Para uso não interativo, defina KB_ASSETS_BASE_URL (ex.: KB_ASSETS_BASE_URL=http://dify.dev.dti/kb-assets)."
+  echo "${answer}"
+}
+
+# ask_base_url: pergunta domínio e protocolo e pede confirmação.
+# Entrada: $1 slug. Saída: URL base (sem slug) em stdout; encerra com erro se inválido ou cancelado.
+ask_base_url() {
+  local slug="$1" domain protocol confirm
+  domain="$(read_answer 'Domínio do Dify (ex.: dify.dev.dti, chat.hmg.dti): ')"
+  domain="${domain,,}"
+  [[ "${domain}" =~ ${DOMAIN_PATTERN} ]] \
+    || fail "domínio inválido '${domain}': informe só o nome do domínio, sem protocolo nem barras (ex.: dify.dev.dti)."
+  protocol="$(read_answer 'Protocolo [http/https] (padrão: http): ')"
+  protocol="${protocol,,}"
+  protocol="${protocol:-http}"
+  [[ "${protocol}" == "http" || "${protocol}" == "https" ]] \
+    || fail "protocolo inválido '${protocol}': use http ou https."
+  echo "As imagens serão publicadas em ${protocol}://${domain}${KB_ASSETS_PATH}/${slug}/" >&2
+  confirm="$(read_answer 'Confirma? [S/n]: ')"
+  case "${confirm,,}" in
+    ""|s|sim) ;;
+    *) echo "Publicação cancelada." >&2; exit 1 ;;
+  esac
+  echo "${protocol}://${domain}${KB_ASSETS_PATH}"
+}
+
+# resolve_base_url: define a URL base a partir de KB_ASSETS_BASE_URL ou perguntando ao usuário.
+# Entrada: $1 slug. Saída: URL base sem barra final em stdout; encerra com erro se inválida.
+resolve_base_url() {
+  local base
+  if [[ -n "${KB_ASSETS_BASE_URL}" ]]; then
+    base="${KB_ASSETS_BASE_URL%/}"
+    [[ "${base,,}" =~ ${BASE_URL_PATTERN} ]] \
+      || fail "KB_ASSETS_BASE_URL inválida '${KB_ASSETS_BASE_URL}': use http:// ou https:// e o domínio (ex.: http://dify.dev.dti/kb-assets)."
+    echo "${base}"
+  else
+    ask_base_url "$1"
   fi
 }
 
@@ -130,7 +204,7 @@ main() {
   markdown="$(find_manual_markdown "${manual_dir}")"
   validate_image_refs "${images_dir}" "${markdown}"
 
-  slug_url="${KB_ASSETS_BASE_URL%/}/${slug}"
+  slug_url="$(resolve_base_url "${slug}")/${slug}"
   target="${manual_dir}/build/$(basename "${markdown}" .md).dify.md"
 
   copy_images_to_volume "${images_dir}" "${slug}" "${markdown}"

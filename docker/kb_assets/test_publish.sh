@@ -174,6 +174,98 @@ test_publishes_only_referenced_images() {
   [[ "$(http_status "${BASE}/onlyref/rascunho.png")" == 404 ]]; check "referenciadas: rascunho.png não publicada" "$?"
 }
 
+# run_interactive: roda o publish.sh sem KB_ASSETS_BASE_URL, com respostas via stdin.
+# Entrada: $1 pasta, $2 slug, $3 respostas (printf-format, ex.: 'a\n\ns\n'). Saída: stdout/stderr do script; retorna seu código.
+run_interactive() {
+  printf "$3" | env -u KB_ASSETS_BASE_URL "${PUBLISH}" "$1" "$2"
+}
+
+# test_prompt_happy_path: fluxo interativo completo com domínio, protocolo padrão e confirmação.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_happy_path() {
+  local dir="${WORK_DIR}/prompt_ok" out
+  make_manual "${dir}"
+  out="$(run_interactive "${dir}" promptok "127.0.0.1:${PORT}\n\ns\n" 2>/dev/null)"
+  check "prompt: código de saída 0" "$?"
+  grep -qF "](http://127.0.0.1:${PORT}/kb-assets/promptok/a.png)" "${dir}/build/manual.dify.md"; check "prompt: build com URL do domínio informado" "$?"
+  [[ "$(http_status "${BASE}/promptok/a.png")" == 200 ]]; check "prompt: a.png servida" "$?"
+  ! grep -qE 'Domínio do Dify|Protocolo|Confirma' <<<"${out}"; check "prompt: stdout sem o texto das perguntas" "$?"
+}
+
+# test_prompt_rejects_invalid_domain: domínios inválidos devem ser recusados sem gerar build/.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_rejects_invalid_domain() {
+  local dir="${WORK_DIR}/prompt_dom" domain
+  make_manual "${dir}"
+  for domain in "http://x.y" "dominio invalido" "a/b" ""; do
+    run_interactive "${dir}" promptdom "${domain}\n\ns\n" >/dev/null 2>&1
+    [[ $? -ne 0 ]]; check "domínio: '${domain}' recusado" "$?"
+  done
+  [[ ! -e "${dir}/build" ]]; check "domínio: nada gerado" "$?"
+}
+
+# test_prompt_rejects_invalid_protocol: protocolo diferente de http/https deve ser recusado.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_rejects_invalid_protocol() {
+  local dir="${WORK_DIR}/prompt_proto"
+  make_manual "${dir}"
+  run_interactive "${dir}" promptproto "127.0.0.1:${PORT}\nftp\ns\n" >/dev/null 2>&1
+  [[ $? -ne 0 ]]; check "protocolo: 'ftp' recusado" "$?"
+  [[ ! -e "${dir}/build" ]]; check "protocolo: nada gerado" "$?"
+}
+
+# test_prompt_cancel: responder 'n' na confirmação cancela sem tocar no volume.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_cancel() {
+  local dir="${WORK_DIR}/prompt_cancel" err
+  make_manual "${dir}"
+  err="$(run_interactive "${dir}" promptcancel "127.0.0.1:${PORT}\n\nn\n" 2>&1 >/dev/null)"
+  [[ $? -ne 0 ]]; check "cancelar: código de saída diferente de 0" "$?"
+  grep -qF "Publicação cancelada" <<<"${err}"; check "cancelar: mensagem em stderr" "$?"
+  [[ ! -e "${dir}/build" ]]; check "cancelar: sem build/" "$?"
+  [[ "$(http_status "${BASE}/promptcancel/a.png")" == 404 ]]; check "cancelar: volume não tocado" "$?"
+}
+
+# test_prompt_without_answers: sem stdin e sem variável, o erro orienta o uso de KB_ASSETS_BASE_URL.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_prompt_without_answers() {
+  local dir="${WORK_DIR}/prompt_empty" err
+  make_manual "${dir}"
+  err="$(env -u KB_ASSETS_BASE_URL "${PUBLISH}" "${dir}" promptempty 2>&1 >/dev/null </dev/null)"
+  [[ $? -ne 0 ]]; check "sem respostas: código de saída diferente de 0" "$?"
+  grep -qF "KB_ASSETS_BASE_URL" <<<"${err}"; check "sem respostas: erro cita KB_ASSETS_BASE_URL" "$?"
+}
+
+# test_rejects_invalid_base_url_env: KB_ASSETS_BASE_URL sem esquema http(s) deve ser recusada.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_rejects_invalid_base_url_env() {
+  local dir="${WORK_DIR}/badenv"
+  make_manual "${dir}"
+  KB_ASSETS_BASE_URL="dify.dev.dti" "${PUBLISH}" "${dir}" badenv >/dev/null 2>&1
+  [[ $? -ne 0 ]]; check "base url: sem esquema recusada" "$?"
+  [[ ! -e "${dir}/build" ]]; check "base url: nada gerado" "$?"
+}
+
+# test_rejects_unsupported_image_refs: referências de imagem não suportadas falham antes de publicar.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_rejects_unsupported_image_refs() {
+  local base="${WORK_DIR}/unsupported" ref expected err dir i=0
+  local refs=('<img src="images/a.png">' '![x](imgs/a.png)' '![x](../a.png)' '![x][ref]')
+  local needles=('<img' 'imgs/a.png' '../a.png' '![x][ref]')
+  for ref in "${refs[@]}"; do
+    expected="${needles[$i]}"
+    dir="${base}${i}"
+    make_manual "${dir}"
+    printf '\n%s\n' "${ref}" >> "${dir}/manual.md"
+    err="$("${PUBLISH}" "${dir}" "unsup${i}" 2>&1 >/dev/null)"
+    [[ $? -ne 0 ]]; check "não suportada: '${ref}' recusada" "$?"
+    grep -qF "${expected}" <<<"${err}"; check "não suportada: erro cita '${expected}'" "$?"
+    [[ ! -e "${dir}/build" ]]; check "não suportada: '${ref}' sem build/" "$?"
+    [[ "$(http_status "${BASE}/unsup${i}/a.png")" == 404 ]]; check "não suportada: '${ref}' volume intacto" "$?"
+    i=$((i + 1))
+  done
+}
+
 test_happy_path
 test_republish_removes_stale_images
 test_fails_when_image_missing
@@ -182,6 +274,13 @@ test_fails_when_volume_missing
 test_rejects_ambiguous_markdown
 test_rejects_unsafe_image_names
 test_publishes_only_referenced_images
+test_prompt_happy_path
+test_prompt_rejects_invalid_domain
+test_prompt_rejects_invalid_protocol
+test_prompt_cancel
+test_prompt_without_answers
+test_rejects_invalid_base_url_env
+test_rejects_unsupported_image_refs
 
 if (( FAILURES > 0 )); then
   echo "${FAILURES} teste(s) falharam"
