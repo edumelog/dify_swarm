@@ -321,6 +321,24 @@ services:
         parallelism: 1
         order: start-first
 
+  kb_assets:
+    image: nginx:alpine
+    configs:
+      - source: dify_kb_assets_conf
+        target: /etc/nginx/conf.d/default.conf
+        mode: 0444
+    volumes:
+      - dify_kb_assets:/usr/share/nginx/html/kb-assets:ro
+    networks:
+      - net_nginx_pm
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      update_config:
+        parallelism: 1
+        order: start-first
+
 networks:
   default:
     driver: overlay
@@ -347,6 +365,8 @@ configs:
     file: ./nginx/docker-entrypoint.sh
   dify_nginx_default_conf_template:
     file: ./nginx/conf.d/default.conf.template
+  dify_kb_assets_conf:
+    file: ./kb_assets/default.conf
 
 volumes:
   dify_app_storage:
@@ -360,3 +380,4 @@ volumes:
   dify_certbot_live:
   dify_certbot_conf:
   dify_certbot_www:
+  dify_kb_assets:
