@@ -46,7 +46,7 @@ renderizadas inline, e as imagens continuam visíveis ao reabrir a conversa depo
 
 ```
 Navegador ──HTTP──> NGPM (dify.dev.dti)
-                     ├── /kb-assets/*  ──> kb_assets:80  (nginx:alpine, volume ro)
+                     ├── /kb-assets/*  ──> dify_kb_assets:80 (nginx:alpine, volume ro)
                      └── /*            ──> dify_nginx:80 (Dify)
 ```
 
@@ -65,7 +65,7 @@ Navegador ──HTTP──> NGPM (dify.dev.dti)
 ### 2. Roteamento no NGPM
 
 Custom location `/kb-assets/` no proxy host `dify.dev.dti`, encaminhando para
-`http://kb_assets:80` (o caminho completo é repassado, por isso o nginx serve sob o
+`http://dify_kb_assets:80` — nome completo do serviço na stack, como já ocorre com `dify_nginx:80` (o caminho completo é repassado, por isso o nginx serve sob o
 prefixo `/kb-assets/`). Feito pela interface do NGPM; passo documentado no README.
 
 URL final: `http://dify.dev.dti/kb-assets/<slug>/<arquivo>`.
