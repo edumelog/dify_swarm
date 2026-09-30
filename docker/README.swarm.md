@@ -90,15 +90,16 @@ O serviço `dify_kb_assets` (nginx) serve as imagens dos manuais da base de conh
 
 Ordem de uso:
 
-1. Faça o deploy da stack (seção 5), que já inclui o serviço `dify_kb_assets`.
-2. No NGPM, crie a custom location `/kb-assets/` do proxy host do Dify apontando para `dify_kb_assets:80`.
-3. Publique o manual, respondendo às perguntas de domínio e protocolo:
+1. Prepare o manual em `kb/<manual>/` (um `.md` e a pasta `images/`). Para gerá-lo a partir de um PDF, use o prompt [`kb_assets/docs/PDF_TO_RAG.md`](kb_assets/docs/PDF_TO_RAG.md).
+2. Faça o deploy da stack (seção 5), que já inclui o serviço `dify_kb_assets`.
+3. No NGPM, crie a custom location `/kb-assets/` do proxy host do Dify apontando para `dify_kb_assets:80`.
+4. Publique o manual, respondendo às perguntas de domínio e protocolo:
 
 ```bash
 docker/kb_assets/publish.sh kb/<manual> <slug>
 ```
 
-4. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
+5. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
 
 Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.md`](kb_assets/README.md).
 
