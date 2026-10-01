@@ -3,11 +3,12 @@
 # kb_assets e gera a versão do Markdown com URLs absolutas para ingestão no Dify.
 #
 # Uso: docker/kb_assets/publish.sh <pasta-do-manual> <slug>
-# Variáveis: KB_ASSETS_VOLUME, KB_HELPER_IMAGE e, opcionalmente, KB_ASSETS_BASE_URL
+# Variáveis: STACK_NAME (padrão: dify; define o volume <stack>_dify_kb_assets), KB_ASSETS_VOLUME,
+# KB_HELPER_IMAGE e, opcionalmente, KB_ASSETS_BASE_URL
 # (ex.: http://dify.dev.dti/kb-assets). Sem KB_ASSETS_BASE_URL, o domínio é perguntado.
 set -euo pipefail
 
-KB_ASSETS_VOLUME="${KB_ASSETS_VOLUME:-dify_dify_kb_assets}"
+KB_ASSETS_VOLUME="${KB_ASSETS_VOLUME:-${STACK_NAME:-dify}_dify_kb_assets}"
 KB_ASSETS_BASE_URL="${KB_ASSETS_BASE_URL:-}"
 KB_ASSETS_PATH="/kb-assets"
 KB_HELPER_IMAGE="${KB_HELPER_IMAGE:-busybox:latest}"

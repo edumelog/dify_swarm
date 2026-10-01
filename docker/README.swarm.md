@@ -31,11 +31,31 @@ cd docker
 cp .env.example .env
 ```
 
-Ajuste no mínimo:
+Preencha as variáveis abaixo. Os valores de senhas e chaves do `.env.example` são públicos e **não podem** ir para um ambiente real. As demais variáveis do `.env.example` são os padrões do Dify e só precisam mudar se você quiser alterar o comportamento correspondente.
 
-- `SECRET_KEY` — gere com `openssl rand -base64 42`
-- Senhas e chaves padrão (os valores do `.env.example` são públicos): `DB_PASSWORD`, `REDIS_PASSWORD`, `PLUGIN_DAEMON_KEY`, `PLUGIN_DIFY_INNER_API_KEY`, `SANDBOX_API_KEY`, `WEAVIATE_API_KEY` / `WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS`
-- URLs públicas, conforme o domínio usado (ex.: `http://dify.dev.dti`): `CONSOLE_API_URL`, `CONSOLE_WEB_URL`, `APP_API_URL`, `APP_WEB_URL`, `FILES_URL`
+Gere cada segredo com `openssl rand -base64 42`.
+
+| Variável | O que preencher | Exemplo | Obrigatória |
+|---|---|---|---|
+| `SECRET_KEY` | Chave que assina os cookies de sessão e os tokens de login. Trocá-la depois desloga todos os usuários. | `openssl rand -base64 42` | Sim |
+| `DB_PASSWORD` | Senha do usuário do Postgres. Só vale na **criação** do volume `dify_postgres_data`; para trocar depois, altere também dentro do banco. | segredo gerado | Sim |
+| `REDIS_PASSWORD` | Senha do Redis (cache e broker do Celery). | segredo gerado | Sim |
+| `PLUGIN_DAEMON_KEY` | Chave que a API usa para chamar o `plugin_daemon`. | segredo gerado | Sim |
+| `PLUGIN_DIFY_INNER_API_KEY` | Chave que o `plugin_daemon` usa para chamar a API. | segredo gerado | Sim |
+| `SANDBOX_API_KEY` | Chave de acesso ao serviço `sandbox` (execução de código). | segredo gerado | Sim |
+| `WEAVIATE_API_KEY` e `WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS` | Chave do Weaviate (banco vetorial). As duas variáveis precisam ter **o mesmo valor**. | segredo gerado | Sim |
+| `CONSOLE_API_URL` | URL pública da API do console. Também é chamada pelo SSR do `web` (ver seção 8). | `https://dify.hmg.dti` | Sim |
+| `CONSOLE_WEB_URL` | URL pública do console web. | `https://dify.hmg.dti` | Sim |
+| `APP_API_URL` | URL pública da API dos apps publicados. | `https://dify.hmg.dti` | Sim |
+| `APP_WEB_URL` | URL pública dos apps publicados (WebApp). | `https://dify.hmg.dti` | Sim |
+| `FILES_URL` | URL pública usada nos links de arquivos e imagens enviados. | `https://dify.hmg.dti` | Sim |
+| `SERVICE_API_URL` | URL base da Service API exibida no console. Vazio = usa a URL atual do navegador. | `https://dify.hmg.dti` | Não |
+| `DIFY_PUBLIC_HOST` | Domínio público, injetado no `extra_hosts` do `web` (seção 8). Sem padrão: o deploy no Swarm falha se estiver vazia. | `dify.hmg.dti` | Sim, no Swarm |
+| `DIFY_PUBLIC_HOST_IP` | IP pelo qual o container `web` alcança o Nginx Proxy Manager na 443 (seção 8). Sem padrão. | `10.100.2.25` | Sim, no Swarm |
+| `DIFY_EXTRA_CA_FILE` | Certificado **público** da CA interna que assina o domínio (nunca a `.key`), em `docker/certs/` (seção 8). Padrão: `./certs/no-extra-ca.pem` (nenhuma CA extra). | `./certs/localCA.pem` | Só com HTTPS de CA interna |
+| `DIFY_PROXY_NETWORK` | Rede overlay externa compartilhada com o Nginx Proxy Manager. | `net_nginx_pm` (padrão) | Não |
+
+Use a mesma origem (protocolo + domínio) em todas as URLs públicas.
 
 ## 3) Exportar o `.env` no shell
 
@@ -61,6 +81,27 @@ docker stack config -c docker-stack.yml > /dev/null
 docker stack deploy -c docker-stack.yml dify
 ```
 
+Atalho para as seções 2 a 5: o `deploy.sh` confere o `.env` e completa o que faltar:
+
+- **segredos** vazios ou iguais aos do `.env.example`: pergunta se você quer **gerar** valores aleatórios (alfanuméricos, 42 caracteres) ou **digitá-los** (Enter gera aquele valor). As duas chaves do Weaviate recebem o mesmo valor;
+- **URLs públicas** vazias: pede cada uma no terminal; Enter repete a anterior;
+- antes de gravar, copia o original para `.env.bak.<data-hora>` (ignorado pelo git, assim como o `.env`) e altera só as linhas dessas chaves.
+
+Atenção: se o banco já existir, uma `DB_PASSWORD` nova no `.env` não muda a senha guardada no Postgres; o script avisa nesse caso.
+
+Em seguida, pergunta se a subida é com Docker Swarm e então:
+
+- **Swarm:** pede `DIFY_PUBLIC_HOST` e `DIFY_PUBLIC_HOST_IP` se estiverem vazios, sugerindo o host de `CONSOLE_API_URL` e o gateway da rede `bridge` (seção 8). Depois confere se o nó é manager e se a rede `DIFY_PROXY_NETWORK` (padrão `net_nginx_pm`) e o arquivo de `DIFY_EXTRA_CA_FILE` existem, exporta o `.env`, valida o manifesto e roda `docker stack deploy` após confirmação;
+- **sem Swarm:** valida e sobe o `docker-compose.yaml` com `docker compose up -d` após confirmação.
+
+```bash
+./deploy.sh              # pergunta o modo
+./deploy.sh --swarm      # ou --compose, sem perguntar
+STACK_NAME=dify-hmg ./deploy.sh --swarm   # outro nome de stack (padrão: dify)
+```
+
+Os testes do script (com `docker` simulado, sem subir nada) ficam em `./test_deploy.sh`.
+
 Para evitar problemas de bind mount no Swarm (comum no Docker Desktop/WSL), este stack usa **volumes nomeados locais** para dados e **configs do Swarm** para templates/scripts (incluindo `nginx/conf.d/default.conf.template`).
 
 ## 6) Verificação
@@ -82,33 +123,75 @@ O serviço `nginx` do Dify **não publica portas** no host — ele está apenas 
 - Forward Hostname: `dify_nginx`
 - Forward Port: `80`
 
+Use `dify_nginx` (nome completo do serviço na stack), e não `dify_web`: o `web` não está na rede `net_nginx_pm` e, mesmo que estivesse, as rotas `/console/api`, `/api` e `/files` não chegariam à API.
+
 Depois acesse:
 
 - `http://dify.dev.dti/install` (criação do admin)
 - `http://dify.dev.dti` (console após instalação)
 
+### Qual IP usar para chamar o NGPM (dev no WSL)
+
+O NGPM publica as portas 80, 443 e 81 (painel) pelo Swarm, que atende só em **IPv4**. No WSL em modo NAT:
+
+- Use o IP da interface `eth0` do WSL, que é o primeiro de `hostname -I` (ex.: `172.19.56.58`). Painel: `http://<ip-do-wsl>:81`.
+- No `hosts` do Windows (`C:\Windows\System32\drivers\etc\hosts`), aponte os domínios para esse IP, ex.: `172.19.56.58  dify.dev.dti`.
+- `localhost` pode não responder: ele resolve primeiro para o IPv6 `::1`. Dentro do WSL, use `127.0.0.1`.
+- O IP do WSL **muda** quando o WSL reinicia (`wsl --shutdown` ou reboot do Windows). Se os domínios `*.dev.dti` pararem de abrir, rode `hostname -I` no WSL e atualize o IP no `hosts` do Windows.
+- O domínio no `hosts` precisa ser idêntico ao do Proxy Host no NGPM.
+
+### Um host quebrado derruba o NGPM inteiro
+
+O nginx do NGPM resolve na inicialização os nomes fixos de `proxy_pass`. Se uma **Custom Location** apontar para um serviço que não existe (ex.: `backend:3000` com o projeto fora do ar), o nginx entra em loop com `[emerg] host not found in upstream` e **todos** os domínios caem, inclusive o painel na porta 81. O destino principal do Proxy Host não tem esse problema, porque o NGPM já o gera em variável (`set $server ...`).
+
+Para recuperar sem o painel, renomeie o arquivo do host problemático dentro do container e depois desative o host no painel:
+
+```bash
+docker logs --tail 20 $(docker ps -q -f name=ngpm_ngpm) | grep emerg   # mostra o N.conf culpado
+docker exec $(docker ps -q -f name=ngpm_ngpm) mv /data/nginx/proxy_host/N.conf /data/nginx/proxy_host/N.conf.err
+```
+
+Para evitar, escreva as locations na aba **Advanced** do Proxy Host com o destino em variável, que só é resolvida a cada requisição:
+
+```nginx
+location /api/public {
+    set $upstream http://<stack>_backend:3000;
+    proxy_pass $upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
 ## 8) SSR do `web`: domínio público e CA interna
 
 Os domínios `*.dti` não estão no DNS — são resolvidos pelo arquivo hosts de quem navega. Mas o SSR do Next.js, **dentro do container `web`**, também chama `CONSOLE_API_URL` (ex.: `https://dify.hmg.dti`). Sem ajuste, o log do `web` mostra `getaddrinfo ENOTFOUND` e o browser exibe "Ocorreu um erro inesperado ao renderizar este componente".
 
-Configure no `.env`:
+Configure no `.env` de **cada ambiente**. A stack não tem valores padrão para o domínio e o IP: se faltarem, o `docker stack deploy` falha com `required variable DIFY_PUBLIC_HOST is missing a value`. O `deploy.sh` pergunta os dois quando estão vazios.
 
 ```env
 # Entrada de hosts injetada no container web (extra_hosts)
 DIFY_PUBLIC_HOST=dify.hmg.dti
-DIFY_PUBLIC_HOST_IP=10.100.2.25        # IP do host onde o Nginx Proxy Manager publica a 443
+DIFY_PUBLIC_HOST_IP=10.100.2.25
 
-# Certificado PÚBLICO da CA interna que assina *.hmg.dti (nunca a chave .key)
+# Certificado PÚBLICO da CA interna que assina o domínio (nunca a chave .key); vazio = nenhuma CA extra
 DIFY_EXTRA_CA_FILE=./certs/localCA.pem
 ```
 
-E copie o certificado público da CA para `docker/certs/` (a pasta é ignorada pelo git):
+Copie o certificado público da CA para `docker/certs/` (a pasta é ignorada pelo git):
 
 ```bash
 cp /caminho/para/localCA.pem docker/certs/localCA.pem
 ```
 
-Sem essas variáveis, o padrão é o ambiente de dev: `dify.dev.dti -> 10.0.2.2` (VIP do nginx interno) e nenhuma CA extra (`certs/no-extra-ca.pem`).
+Como descobrir os valores em qualquer servidor:
+
+- `DIFY_PUBLIC_HOST`: o host de `CONSOLE_API_URL`, que é o domínio do Proxy Host no NGPM. O `deploy.sh` sugere esse valor.
+- `DIFY_PUBLIC_HOST_IP`: um IP que, **de dentro de um container**, chegue ao NGPM na 443. O gateway da rede `bridge` costuma funcionar e não muda com reinícios. Descubra-o com `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`; o `deploy.sh` sugere esse valor. Também serve o IP fixo do servidor na rede. Não use um VIP do Swarm, que muda a cada deploy, nem o IP do WSL (`hostname -I`), que muda a cada reinício.
+- `DIFY_EXTRA_CA_FILE`: o certificado da CA que emitiu o certificado do Proxy Host. Confira com `openssl verify -CAfile <ca.pem> <fullchain.pem>`.
+
+Sintomas de valor errado no log do `web`: `connect EHOSTUNREACH <ip>:443` ou `getaddrinfo ENOTFOUND` (IP ou domínio errados) e `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (CA ausente ou errada).
 
 O certificado vira o config `dify_web_extra_ca` e é carregado via `NODE_EXTRA_CA_CERTS`. Como configs do Swarm são imutáveis, ao **trocar** o certificado é preciso remover a stack antes do deploy (ou renomear o config).
 
@@ -187,5 +270,6 @@ docker network inspect net_nginx_pm --verbose --format '{{range $k,$v := .Servic
 ## Observações importantes para Swarm
 
 - `depends_on` do Compose não controla ordem no Swarm; os serviços sobem de forma independente.
+- **Primeira subida demora:** a migração do banco (`flask upgrade-db`) roda no `api`, no `worker` e no `worker_beat`; quem pegar a trava no Redis migra e os outros pulam. Com o banco vazio ela leva vários minutos (~6 min no WSL). Enquanto isso o `api` fica em `Starting` e o `nginx` reinicia com `host not found in upstream "dify_api"`, pois o Swarm só registra no DNS tarefas saudáveis. Isso é esperado: o `start_period: 15m` do healthcheck do `api` evita que o Swarm o mate no meio da migração. Acompanhe com `docker service logs -f dify_worker | grep -i migration`.
 - Este setup usa **volumes nomeados locais**, adequado para **single-node**.
 - Para produção multi-nó, migre para storage compartilhado (NFS/driver distribuído) e políticas de placement.

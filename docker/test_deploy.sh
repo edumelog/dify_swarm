@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# Testes do docker/deploy.sh com um `docker` simulado no PATH (nada sobe de verdade).
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY="${SCRIPT_DIR}/deploy.sh"
+WORK_DIR="$(mktemp -d)"
+FAILURES=0
+
+# cleanup: remove os arquivos temporários dos testes.
+# Entrada: nenhuma. Saída: nenhuma.
+cleanup() {
+  rm -rf "${WORK_DIR}"
+}
+trap cleanup EXIT
+
+# check: registra o resultado de uma asserção.
+# Entrada: $1 descrição, $2 código de retorno da asserção (0 = passou). Saída: incrementa FAILURES se falhou.
+check() {
+  if [[ "$2" == "0" ]]; then
+    echo "ok   - $1"
+  else
+    echo "FAIL - $1"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
+# Stub do docker: registra cada chamada em MOCK_LOG e responde conforme MOCK_MANAGER/MOCK_NETWORK/MOCK_PG_VOLUME;
+# `network inspect bridge` devolve o gateway MOCK_BRIDGE_GW.
+mkdir -p "${WORK_DIR}/bin"
+cat > "${WORK_DIR}/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+echo "docker $*" >> "${MOCK_LOG}"
+case "$1" in
+  info) echo "${MOCK_MANAGER:-true}" ;;
+  network)
+    if [[ "$3" == "bridge" ]]; then echo "${MOCK_BRIDGE_GW:-172.30.0.1}"; else [[ "${MOCK_NETWORK:-1}" == "1" ]]; fi ;;
+  volume) [[ "${MOCK_PG_VOLUME:-0}" == "1" ]] ;;
+  stack) [[ "$2" != "config" ]] || echo "SECRET_KEY_SEEN=${SECRET_KEY:-}" >> "${MOCK_LOG}" ;;
+esac
+EOF
+chmod +x "${WORK_DIR}/bin/docker"
+export PATH="${WORK_DIR}/bin:${PATH}"
+
+# Exemplo mínimo com os valores públicos que o script deve recusar.
+cat > "${WORK_DIR}/env.example" <<'EOF'
+SECRET_KEY=sk-public
+DB_PASSWORD=difyai123456
+REDIS_PASSWORD=difyai123456
+PLUGIN_DAEMON_KEY=public-daemon
+PLUGIN_DIFY_INNER_API_KEY=public-inner
+SANDBOX_API_KEY=dify-sandbox
+WEAVIATE_API_KEY=public-weaviate
+WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS=public-weaviate
+CONSOLE_API_URL=
+EOF
+touch "${WORK_DIR}/ca.pem"
+
+# make_env: grava um .env válido em $1, aplicando as substituições KEY=valor passadas a seguir.
+# Entrada: $1 caminho do .env, $2.. pares KEY=valor (valor vazio permitido). Saída: arquivo gravado.
+make_env() {
+  local file="$1" pair key
+  shift
+  cat > "${file}" <<EOF
+# Comentário que deve sobreviver ao preenchimento
+SECRET_KEY=real-secret
+DB_PASSWORD=real-db
+REDIS_PASSWORD=real-redis
+PLUGIN_DAEMON_KEY=real-daemon
+PLUGIN_DIFY_INNER_API_KEY=real-inner
+SANDBOX_API_KEY=real-sandbox
+WEAVIATE_API_KEY=real-weaviate
+WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS=real-weaviate
+CONSOLE_API_URL=https://dify.hmg.dti
+CONSOLE_WEB_URL=https://dify.hmg.dti
+APP_API_URL=https://dify.hmg.dti
+APP_WEB_URL=https://dify.hmg.dti
+FILES_URL=https://dify.hmg.dti
+LOG_DATEFORMAT=%Y-%m-%d %H:%M:%S
+DIFY_PUBLIC_HOST=dify.hmg.dti
+DIFY_PUBLIC_HOST_IP=127.0.0.1
+DIFY_EXTRA_CA_FILE=${WORK_DIR}/ca.pem
+EOF
+  for pair in "$@"; do
+    key="${pair%%=*}"
+    sed -i "/^${key}=/d" "${file}"
+    echo "${pair}" >> "${file}"
+  done
+}
+
+# run_deploy: executa o deploy.sh com o .env $1, a entrada $2 e os argumentos seguintes.
+# Entrada: $1 .env, $2 texto do stdin, $3.. argumentos. Saída: stdout+stderr em OUT, código em RC, log em MOCK_LOG.
+run_deploy() {
+  local env_file="$1" input="$2"
+  shift 2
+  export MOCK_LOG="${WORK_DIR}/docker.log"
+  : > "${MOCK_LOG}"
+  OUT="$(printf '%b' "${input}" | ENV_FILE="${env_file}" ENV_EXAMPLE="${WORK_DIR}/env.example" \
+    bash "${DEPLOY}" "$@" 2>&1)"
+  RC=$?
+}
+
+# test_missing_env: sem .env o script falha sem chamar o docker.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_missing_env() {
+  run_deploy "${WORK_DIR}/nao-existe.env" "" --swarm
+  check "falha sem .env" "$([[ ${RC} -ne 0 ]]; echo $?)"
+  check "mensagem cita o .env ausente" "$(grep -q "não encontrado" <<<"${OUT}"; echo $?)"
+  check "não chama o docker sem .env" "$([[ ! -s ${MOCK_LOG} ]]; echo $?)"
+}
+
+# test_empty_and_public_values: sem resposta à pergunta, lista os segredos pendentes e não altera nada.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_empty_and_public_values() {
+  local env="${WORK_DIR}/bad.env" before
+  make_env "${env}" "SECRET_KEY=" "DB_PASSWORD=difyai123456"
+  before="$(cat "${env}")"
+  run_deploy "${env}" "" --swarm
+  check "falha sem resposta" "$([[ ${RC} -ne 0 ]]; echo $?)"
+  check "aponta SECRET_KEY vazia" "$(grep -q "SECRET_KEY.*vazia" <<<"${OUT}"; echo $?)"
+  check "aponta DB_PASSWORD igual ao exemplo" "$(grep -q "DB_PASSWORD.*\.env.example" <<<"${OUT}"; echo $?)"
+  check "não sobe nada" "$(! grep -q "deploy\|up -d" "${MOCK_LOG}"; echo $?)"
+  check "não altera o .env" "$([[ "$(cat "${env}")" == "${before}" ]]; echo $?)"
+  check "não cria backup" "$(! ls "${env}".bak.* >/dev/null 2>&1; echo $?)"
+}
+
+# env_value: lê o valor de uma chave de um arquivo .env.
+# Entrada: $1 arquivo, $2 chave. Saída: valor em stdout.
+env_value() {
+  grep -m1 "^$2=" "$1" | cut -d= -f2-
+}
+
+# test_generate_secrets: opção g gera segredos aleatórios, faz backup e preserva o resto do arquivo.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_generate_secrets() {
+  local env="${WORK_DIR}/gen.env" before secret
+  rm -f "${WORK_DIR}"/gen.env.bak.*
+  make_env "${env}" "SECRET_KEY=" "DB_PASSWORD=difyai123456" \
+    "WEAVIATE_API_KEY=public-weaviate" "WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS=public-weaviate"
+  before="$(cat "${env}")"
+  run_deploy "${env}" "g\nn\n" --swarm
+  secret="$(env_value "${env}" SECRET_KEY)"
+  check "segue até a confirmação após gerar" "$([[ ${RC} -eq 0 ]] && grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
+  check "gera SECRET_KEY alfanumérica de 42 caracteres" "$([[ "${secret}" =~ ^[A-Za-z0-9]{42}$ ]]; echo $?)"
+  check "troca DB_PASSWORD do exemplo" "$([[ "$(env_value "${env}" DB_PASSWORD)" =~ ^[A-Za-z0-9]{42}$ ]]; echo $?)"
+  check "chaves do Weaviate iguais entre si e novas" "$([[ "$(env_value "${env}" WEAVIATE_API_KEY)" == "$(env_value "${env}" WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS)" && "$(env_value "${env}" WEAVIATE_API_KEY)" != "public-weaviate" ]]; echo $?)"
+  check "mantém os segredos já válidos" "$([[ "$(env_value "${env}" REDIS_PASSWORD)" == "real-redis" ]]; echo $?)"
+  check "preserva comentário e valores com espaço" "$(grep -q "^# Comentário que deve sobreviver" "${env}" && grep -q "^LOG_DATEFORMAT=%Y-%m-%d %H:%M:%S$" "${env}"; echo $?)"
+  check "cria backup com o conteúdo original" "$([[ "$(cat "${env}".bak.* 2>/dev/null)" == "${before}" ]]; echo $?)"
+  check "não exibe o valor gerado" "$(! grep -qF "${secret}" <<<"${OUT}"; echo $?)"
+}
+
+# test_type_secrets: opção d grava o valor digitado e gera quando a resposta é vazia.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_type_secrets() {
+  local env="${WORK_DIR}/type.env"
+  make_env "${env}" "SECRET_KEY=" "REDIS_PASSWORD=difyai123456"
+  run_deploy "${env}" "d\nminha-chave\n\nn\n" --swarm
+  check "grava o valor digitado" "$([[ "$(env_value "${env}" SECRET_KEY)" == "minha-chave" ]]; echo $?)"
+  check "gera quando a resposta é vazia" "$([[ "$(env_value "${env}" REDIS_PASSWORD)" =~ ^[A-Za-z0-9]{42}$ ]]; echo $?)"
+}
+
+# test_cancel_secrets: opção c encerra sem alterar o .env.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_cancel_secrets() {
+  local env="${WORK_DIR}/cancel.env" before
+  make_env "${env}" "SECRET_KEY="
+  before="$(cat "${env}")"
+  run_deploy "${env}" "c\n" --swarm
+  check "cancelar o preenchimento falha" "$([[ ${RC} -ne 0 ]]; echo $?)"
+  check "cancelar não altera o .env" "$([[ "$(cat "${env}")" == "${before}" ]]; echo $?)"
+}
+
+# test_fill_urls: URLs vazias são pedidas; Enter repete a anterior e valores inválidos são recusados.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_fill_urls() {
+  local env="${WORK_DIR}/urls.env"
+  make_env "${env}" "CONSOLE_API_URL=" "FILES_URL="
+  run_deploy "${env}" "ftp://x.dti\nhttps://x.dti/\n\nn\n" --swarm
+  check "recusa URL inválida" "$(grep -q "inválida" <<<"${OUT}"; echo $?)"
+  check "grava a URL digitada sem barra final" "$([[ "$(env_value "${env}" CONSOLE_API_URL)" == "https://x.dti" ]]; echo $?)"
+  check "Enter repete a URL anterior" "$([[ "$(env_value "${env}" FILES_URL)" == "https://x.dti" ]]; echo $?)"
+  check "mantém URLs já preenchidas" "$([[ "$(env_value "${env}" APP_WEB_URL)" == "https://dify.hmg.dti" ]]; echo $?)"
+}
+
+# test_postgres_volume_warning: avisa ao gerar DB_PASSWORD quando o volume do Postgres já existe.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_postgres_volume_warning() {
+  local env="${WORK_DIR}/pg.env"
+  make_env "${env}" "DB_PASSWORD=difyai123456"
+  MOCK_PG_VOLUME=1 run_deploy "${env}" "g\nn\n" --swarm
+  check "avisa sobre o volume do Postgres existente" "$(grep -q "AVISO.*dify_postgres_data" <<<"${OUT}"; echo $?)"
+}
+
+# test_weaviate_mismatch: as duas chaves do Weaviate precisam ser iguais.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_weaviate_mismatch() {
+  local env="${WORK_DIR}/weaviate.env"
+  make_env "${env}" "WEAVIATE_API_KEY=outra"
+  run_deploy "${env}" "" --swarm
+  check "falha com chaves do Weaviate diferentes" "$([[ ${RC} -ne 0 ]]; echo $?)"
+  check "mensagem cita o Weaviate" "$(grep -q "WEAVIATE" <<<"${OUT}"; echo $?)"
+}
+
+# test_mixed_origins_warns: URLs públicas com origens diferentes geram aviso, não erro.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_mixed_origins_warns() {
+  local env="${WORK_DIR}/origins.env"
+  make_env "${env}" "FILES_URL=http://outro.dti"
+  run_deploy "${env}" "n\n" --swarm
+  check "avisa sobre origens diferentes" "$(grep -q "AVISO.*origem" <<<"${OUT}"; echo $?)"
+  check "segue até a confirmação" "$(grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_swarm_deploy: modo Swarm valida com o .env exportado e faz o deploy após confirmar.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_swarm_deploy() {
+  local env="${WORK_DIR}/ok.env"
+  make_env "${env}"
+  run_deploy "${env}" "s\ns\n"
+  check "termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
+  check "pergunta se é Swarm" "$(grep -q "Swarm" <<<"${OUT}"; echo $?)"
+  check "exporta o .env antes do stack config" "$(grep -q "SECRET_KEY_SEEN=real-secret" "${MOCK_LOG}"; echo $?)"
+  check "faz o stack deploy da stack dify" "$(grep -q "docker stack deploy -c docker-stack.yml dify" "${MOCK_LOG}"; echo $?)"
+  check "não usa compose" "$(! grep -q "docker compose" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_swarm_cancel: recusar a confirmação valida mas não faz deploy.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_swarm_cancel() {
+  local env="${WORK_DIR}/ok.env"
+  make_env "${env}"
+  run_deploy "${env}" "n\n" --swarm
+  check "cancelamento termina sem erro" "$([[ ${RC} -eq 0 ]]; echo $?)"
+  check "valida o manifesto" "$(grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
+  check "não faz deploy" "$(! grep -q "stack deploy" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_swarm_prerequisites: Swarm exige nó manager, rede net_nginx_pm e arquivo da CA.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_swarm_prerequisites() {
+  local env="${WORK_DIR}/ok.env"
+  make_env "${env}"
+  MOCK_MANAGER=false run_deploy "${env}" "s\n" --swarm
+  check "falha fora de um manager" "$([[ ${RC} -ne 0 ]] && grep -q "manager" <<<"${OUT}"; echo $?)"
+  MOCK_NETWORK=0 run_deploy "${env}" "s\n" --swarm
+  check "falha sem a rede net_nginx_pm" "$([[ ${RC} -ne 0 ]] && grep -q "net_nginx_pm" <<<"${OUT}"; echo $?)"
+  make_env "${env}" "DIFY_EXTRA_CA_FILE=${WORK_DIR}/sem-ca.pem"
+  run_deploy "${env}" "s\n" --swarm
+  check "falha sem o arquivo da CA" "$([[ ${RC} -ne 0 ]] && grep -q "DIFY_EXTRA_CA_FILE" <<<"${OUT}"; echo $?)"
+  check "não faz deploy com pré-requisito faltando" "$(! grep -q "stack deploy" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_fill_public_host_suggestions: no Swarm, Enter aceita o host de CONSOLE_API_URL e o gateway da rede bridge.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_fill_public_host_suggestions() {
+  local env="${WORK_DIR}/host.env"
+  make_env "${env}" "DIFY_PUBLIC_HOST=" "DIFY_PUBLIC_HOST_IP="
+  run_deploy "${env}" "s\n\n\nn\n"
+  check "sugere e grava o host de CONSOLE_API_URL" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST)" == "dify.hmg.dti" ]]; echo $?)"
+  check "sugere e grava o gateway da rede bridge" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST_IP)" == "172.30.0.1" ]]; echo $?)"
+  check "segue até a confirmação" "$([[ ${RC} -eq 0 ]] && grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_fill_public_host_typed: valores digitados são gravados e IPs inválidos são recusados.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_fill_public_host_typed() {
+  local env="${WORK_DIR}/host-typed.env"
+  make_env "${env}" "DIFY_PUBLIC_HOST=" "DIFY_PUBLIC_HOST_IP="
+  run_deploy "${env}" "chat.prd.dti\n999.1.1.1\n10.1.2.3\nn\n" --swarm
+  check "grava o domínio digitado" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST)" == "chat.prd.dti" ]]; echo $?)"
+  check "recusa IP inválido" "$(grep -q "IP inválido" <<<"${OUT}"; echo $?)"
+  check "grava o IP digitado" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST_IP)" == "10.1.2.3" ]]; echo $?)"
+}
+
+# test_compose_skips_public_host: sem Swarm, DIFY_PUBLIC_HOST(_IP) não são pedidos nem exigidos.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_skips_public_host() {
+  local env="${WORK_DIR}/host-compose.env"
+  make_env "${env}" "DIFY_PUBLIC_HOST=" "DIFY_PUBLIC_HOST_IP="
+  run_deploy "${env}" "n\nn\n"
+  check "compose não pede o domínio público" "$([[ ${RC} -eq 0 ]] && ! grep -q "DIFY_PUBLIC_HOST" <<<"${OUT}"; echo $?)"
+}
+
+# test_proxy_network_from_env: a rede do NGPM vem de DIFY_PROXY_NETWORK, com net_nginx_pm como padrão.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_proxy_network_from_env() {
+  local env="${WORK_DIR}/net.env"
+  make_env "${env}"
+  run_deploy "${env}" "n\n" --swarm
+  check "usa net_nginx_pm por padrão" "$(grep -q "docker network inspect net_nginx_pm" "${MOCK_LOG}"; echo $?)"
+  make_env "${env}" "DIFY_PROXY_NETWORK=proxy_hmg"
+  run_deploy "${env}" "n\n" --swarm
+  check "usa DIFY_PROXY_NETWORK do .env" "$(grep -q "docker network inspect proxy_hmg" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_stack_has_no_environment_defaults: o docker-stack.yml exige domínio e IP públicos do .env.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_stack_has_no_environment_defaults() {
+  local stack="${SCRIPT_DIR}/docker-stack.yml"
+  check "stack exige DIFY_PUBLIC_HOST" "$(grep -q 'DIFY_PUBLIC_HOST:?' "${stack}"; echo $?)"
+  check "stack exige DIFY_PUBLIC_HOST_IP" "$(grep -q 'DIFY_PUBLIC_HOST_IP:?' "${stack}"; echo $?)"
+  check "stack sem IP ou domínio de ambiente" "$(! grep -qE '\.dev\.dti|\.hmg\.dti|10\.0\.2\.2|172\.17\.' "${stack}"; echo $?)"
+}
+
+# test_compose_deploy: sem Swarm valida e sobe com docker compose.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_deploy() {
+  local env="${WORK_DIR}/ok.env"
+  make_env "${env}"
+  run_deploy "${env}" "n\ns\n"
+  check "compose termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
+  check "valida o compose" "$(grep -q "docker compose .*-f docker-compose.yaml config -q" "${MOCK_LOG}"; echo $?)"
+  check "sobe com compose up -d" "$(grep -q "docker compose .*-f docker-compose.yaml up -d" "${MOCK_LOG}"; echo $?)"
+  check "não usa stack" "$(! grep -q "docker stack" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_mode_question_requires_answer: a pergunta do Swarm só aceita s/S/n/N e repete para qualquer outra resposta.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_mode_question_requires_answer() {
+  local env="${WORK_DIR}/mode.env" asked
+  make_env "${env}"
+  run_deploy "${env}" "\nsim\nx\nS\nn\n"
+  asked="$(grep -o "Subir com Docker Swarm?" <<<"${OUT}" | wc -l)"
+  check "repete a pergunta até receber s/S/n/N" "$([[ ${asked} -eq 4 ]]; echo $?)"
+  check "S maiúsculo escolhe o Swarm" "$(grep -q "docker stack config" "${MOCK_LOG}" && ! grep -q "docker compose" "${MOCK_LOG}"; echo $?)"
+  run_deploy "${env}" "N\nn\n"
+  check "N maiúsculo escolhe o Compose" "$(grep -q "docker compose" "${MOCK_LOG}" && ! grep -q "docker stack" "${MOCK_LOG}"; echo $?)"
+  run_deploy "${env}" "\n"
+  check "sem resposta não escolhe modo nem sobe nada" "$([[ ${RC} -ne 0 ]] && ! grep -q "docker stack\|docker compose" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_invalid_argument: argumento desconhecido falha com a ajuda.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_invalid_argument() {
+  run_deploy "${WORK_DIR}/ok.env" "" --xyz
+  check "falha com argumento inválido" "$([[ ${RC} -ne 0 ]] && grep -q "Uso:" <<<"${OUT}"; echo $?)"
+}
+
+test_missing_env
+test_empty_and_public_values
+test_generate_secrets
+test_type_secrets
+test_cancel_secrets
+test_fill_urls
+test_postgres_volume_warning
+test_weaviate_mismatch
+test_mixed_origins_warns
+test_swarm_deploy
+test_swarm_cancel
+test_swarm_prerequisites
+test_fill_public_host_suggestions
+test_fill_public_host_typed
+test_compose_skips_public_host
+test_proxy_network_from_env
+test_stack_has_no_environment_defaults
+test_compose_deploy
+test_mode_question_requires_answer
+test_invalid_argument
+
+echo
+if (( FAILURES > 0 )); then
+  echo "${FAILURES} asserção(ões) falharam."
+  exit 1
+fi
+echo "Todos os testes passaram."

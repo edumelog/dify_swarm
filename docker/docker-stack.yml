@@ -47,7 +47,10 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      # O Swarm mata tarefas unhealthy (o Compose não). Na primeira subida o
+      # `flask upgrade-db` leva vários minutos (~6 min no WSL); com 30s a API era
+      # morta em loop no meio da migração e o nginx não resolvia `dify_api`.
+      start_period: 15m
     networks:
       - default
       - ssrf_proxy_network
@@ -113,9 +116,9 @@ services:
         mode: 0444
     # O domínio público (ex.: *.dti) só existe no hosts de quem navega; o SSR do
     # Next.js dentro do container precisa desta entrada para chamar CONSOLE_API_URL.
-    # dev (WSL): dify.dev.dti -> VIP do nginx interno; hmg: dify.hmg.dti -> IP do host (NPM).
+    # Os dois valores vêm do .env de cada ambiente (veja a seção 8 do README.swarm.md).
     extra_hosts:
-      - "${DIFY_PUBLIC_HOST:-dify.dev.dti}:${DIFY_PUBLIC_HOST_IP:-10.0.2.2}"
+      - "${DIFY_PUBLIC_HOST:?defina DIFY_PUBLIC_HOST no .env (domínio público do Dify)}:${DIFY_PUBLIC_HOST_IP:?defina DIFY_PUBLIC_HOST_IP no .env (IP que alcança o NGPM na 443)}"
     networks:
       - default
     deploy:
@@ -360,6 +363,8 @@ networks:
     attachable: true
   net_nginx_pm:
     external: true
+    # Rede compartilhada com o Nginx Proxy Manager; troque via .env se o ambiente usar outro nome.
+    name: ${DIFY_PROXY_NETWORK:-net_nginx_pm}
 
 configs:
   # Certificado público da CA interna (não versionado). Ao trocar o arquivo,
