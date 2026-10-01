@@ -27,6 +27,8 @@ check() {
 
 # Stub do docker: registra cada chamada em MOCK_LOG e responde conforme MOCK_MANAGER/MOCK_NETWORK/MOCK_PG_VOLUME;
 # `network inspect bridge` devolve o gateway MOCK_BRIDGE_GW; `config inspect` devolve MOCK_CA_CONFIG (ou falha se vazio).
+# Após o deploy: `service ls` devolve MOCK_REPLICAS; `exec` no Postgres só mostra a versão do banco depois de
+# MOCK_DB_POLLS consultas (contador em MOCK_STATE_DIR); `exec` no Redis devolve MOCK_LOCK (1 = migração em andamento).
 mkdir -p "${WORK_DIR}/bin"
 cat > "${WORK_DIR}/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -37,6 +39,16 @@ case "$1" in
     if [[ "$3" == "bridge" ]]; then echo "${MOCK_BRIDGE_GW:-172.30.0.1}"; else [[ "${MOCK_NETWORK:-1}" == "1" ]]; fi ;;
   volume) [[ "${MOCK_PG_VOLUME:-0}" == "1" ]] ;;
   config) [[ -n "${MOCK_CA_CONFIG:-}" ]] && printf '%s\n' "${MOCK_CA_CONFIG}" ;;
+  service) printf '%b\n' "${MOCK_REPLICAS:-1/1\n1/1}" ;;
+  ps) [[ "$*" == *db_postgres* ]] && echo "cid_db" || echo "cid_redis" ;;
+  exec)
+    if [[ "$2" == "cid_db" ]]; then
+      n="$(cat "${MOCK_STATE_DIR}/db_polls" 2>/dev/null || echo "${MOCK_DB_POLLS:-0}")"
+      if (( n > 0 )); then echo $((n - 1)) > "${MOCK_STATE_DIR}/db_polls"; exit 1; fi
+      echo "c3f1a9b2e6d4"
+    else
+      echo "${MOCK_LOCK:-0}"
+    fi ;;
   stack) [[ "$2" != "config" ]] || echo "SECRET_KEY_SEEN=${SECRET_KEY:-}" >> "${MOCK_LOG}" ;;
 esac
 EOF
@@ -62,7 +74,7 @@ CA_CONTENT="$(printf '%s\n' '-----BEGIN CERTIFICATE-----' 'MIIBfakeca' '-----END
 for name in ca.pem localCA.pem outra.pem; do printf '%s\n' "${CA_CONTENT}" > "${CERTS_DIR}/${name}"; done
 printf '%s\n' "${CA_CONTENT}" '-----BEGIN PRIVATE KEY-----' 'MIIEsecret' '-----END PRIVATE KEY-----' > "${CERTS_DIR}/chave.pem"
 printf 'texto qualquer\n' > "${CERTS_DIR}/lixo.pem"
-export CERTS_DIR
+export CERTS_DIR DEPLOY_POLL_SECONDS=0
 
 # make_env: grava um .env válido em $1, aplicando as substituições KEY=valor passadas a seguir.
 # Entrada: $1 caminho do .env, $2.. pares KEY=valor (valor vazio permitido). Saída: arquivo gravado.
@@ -101,8 +113,9 @@ EOF
 run_deploy() {
   local env_file="$1" input="$2"
   shift 2
-  export MOCK_LOG="${WORK_DIR}/docker.log"
+  export MOCK_LOG="${WORK_DIR}/docker.log" MOCK_STATE_DIR="${WORK_DIR}/state"
   : > "${MOCK_LOG}"
+  rm -rf "${MOCK_STATE_DIR}"; mkdir -p "${MOCK_STATE_DIR}"
   OUT="$(printf '%b' "${input}" | ENV_FILE="${env_file}" ENV_EXAMPLE="${WORK_DIR}/env.example" \
     bash "${DEPLOY}" "$@" 2>&1)"
   RC=$?
@@ -392,6 +405,45 @@ test_certs_gitignore() {
   check "localCA.pem versionado não contém chave privada" "$(! grep -q "PRIVATE KEY" "${SCRIPT_DIR}/certs/localCA.pem"; echo $?)"
 }
 
+# test_waits_for_migration: após o deploy, espera o banco migrado antes de dizer que o Dify está pronto.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_waits_for_migration() {
+  local env="${WORK_DIR}/wait.env"
+  make_env "${env}"
+  MOCK_DB_POLLS=2 run_deploy "${env}" "\ns\n" --swarm
+  check "espera o banco ser migrado" "$([[ "$(grep -c "docker exec cid_db" "${MOCK_LOG}")" -ge 3 ]]; echo $?)"
+  check "anuncia o Dify pronto com a versão do banco" "$([[ ${RC} -eq 0 ]] && grep -q "Dify pronto:.*c3f1a9b2e6d4" <<<"${OUT}"; echo $?)"
+  check "consulta o banco do .env" "$(grep -q "psql -U postgres -d dify" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_waits_for_lock_and_replicas: banco com versão não basta; espera a trava liberar e os serviços ficarem 1/1.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_waits_for_lock_and_replicas() {
+  local env="${WORK_DIR}/wait-lock.env"
+  make_env "${env}"
+  MOCK_LOCK=1 DEPLOY_WAIT_TIMEOUT=0 run_deploy "${env}" "\ns\n" --swarm
+  check "não anuncia pronto com migração em andamento" "$([[ ${RC} -ne 0 ]] && ! grep -q "Dify pronto:" <<<"${OUT}" && grep -q "migra" <<<"${OUT}"; echo $?)"
+  MOCK_REPLICAS="1/1\n0/1" DEPLOY_WAIT_TIMEOUT=0 run_deploy "${env}" "\ns\n" --swarm
+  check "não anuncia pronto com serviço fora do ar" "$([[ ${RC} -ne 0 ]] && ! grep -q "Dify pronto:" <<<"${OUT}"; echo $?)"
+  MOCK_REPLICAS="1/1\n0/1 (1/1 completed)" run_deploy "${env}" "\ns\n" --swarm
+  check "job concluído (init_permissions) conta como pronto" "$([[ ${RC} -eq 0 ]] && grep -q "Dify pronto:" <<<"${OUT}"; echo $?)"
+}
+
+# test_wait_timeout_message: sem banco migrado no prazo, falha com dica de diagnóstico.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_wait_timeout_message() {
+  local env="${WORK_DIR}/wait-timeout.env"
+  make_env "${env}"
+  MOCK_DB_POLLS=99 DEPLOY_WAIT_TIMEOUT=0 run_deploy "${env}" "\ns\n" --swarm
+  check "falha ao estourar o prazo" "$([[ ${RC} -ne 0 ]] && grep -q "docker service logs" <<<"${OUT}"; echo $?)"
+}
+
+# test_stack_postgres_start_period: o Postgres tem tempo para o initdb da primeira subida.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_stack_postgres_start_period() {
+  check "db_postgres com start_period de 5m" "$(awk '/^  db_postgres:/{f=1} f&&/start_period/{print; exit}' "${SCRIPT_DIR}/docker-stack.yml" | grep -q "start_period: 5m"; echo $?)"
+}
+
 # test_compose_deploy: sem Swarm valida e sobe com docker compose.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_compose_deploy() {
@@ -451,6 +503,10 @@ test_ca_none
 test_ca_rejects_invalid_files
 test_ca_config_change_warning
 test_certs_gitignore
+test_waits_for_migration
+test_waits_for_lock_and_replicas
+test_wait_timeout_message
+test_stack_postgres_start_period
 test_compose_deploy
 test_mode_question_requires_answer
 test_invalid_argument

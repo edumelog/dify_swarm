@@ -91,7 +91,7 @@ Atenção: se o banco já existir, uma `DB_PASSWORD` nova no `.env` não muda a 
 
 Em seguida, pergunta se a subida é com Docker Swarm e então:
 
-- **Swarm:** pede `DIFY_PUBLIC_HOST` e `DIFY_PUBLIC_HOST_IP` se estiverem vazios, sugerindo o host de `CONSOLE_API_URL` e o gateway da rede `bridge` (seção 8). Pergunta o arquivo da CA em `docker/certs/` (padrão `localCA.pem`) e não prossegue sem um certificado válido. Depois confere se o nó é manager e se a rede `DIFY_PROXY_NETWORK` (padrão `net_nginx_pm`) existe, exporta o `.env`, valida o manifesto e roda `docker stack deploy` após confirmação;
+- **Swarm:** pede `DIFY_PUBLIC_HOST` e `DIFY_PUBLIC_HOST_IP` se estiverem vazios, sugerindo o host de `CONSOLE_API_URL` e o gateway da rede `bridge` (seção 8). Pergunta o arquivo da CA em `docker/certs/` (padrão `localCA.pem`) e não prossegue sem um certificado válido. Depois confere se o nó é manager e se a rede `DIFY_PROXY_NETWORK` (padrão `net_nginx_pm`) existe, exporta o `.env`, valida o manifesto e roda `docker stack deploy` após confirmação. Em seguida **espera o Dify ficar pronto**: todos os serviços no ar, o banco migrado (tabela `alembic_version`) e nenhuma migração em andamento (trava `db_upgrade_lock` no Redis). Só então mostra `Dify pronto`. O prazo é `DEPLOY_WAIT_TIMEOUT` (padrão: 1200s), e Ctrl+C interrompe só a espera;
 - **sem Swarm:** valida e sobe o `docker-compose.yaml` com `docker compose up -d` após confirmação.
 
 ```bash
@@ -283,6 +283,7 @@ STACK_NAME=difytest ./remove.sh # outra stack
   O script lista os serviços e os volumes da stack, que ele identifica pelo label `com.docker.stack.namespace`, e pergunta `Apagar também os volumes (dados)? [s/n]`. Essa pergunta só aceita s/S/n/N.
   - Com `n`, remove a stack, espera a remoção terminar e **mantém** os volumes. Um novo deploy com o mesmo `STACK_NAME` reaproveita os dados e as senhas gravadas no banco, então use o mesmo `.env`.
   - Com `s`, exige que você digite o nome da stack para confirmar. Depois remove a stack e apaga **todos** os volumes dela: banco, arquivos, bases vetoriais e volumes antigos. Isso não pode ser desfeito. Se a confirmação não conferir, nada é removido.
+  - Depois de apagar os volumes, **limpe os dados do site no navegador** (só do domínio do Dify) ou use uma janela anônima. A sessão da instalação anterior fica guardada em cookies e no armazenamento local; com o banco novo a API responde 401 e a página mostra "Ocorreu um erro inesperado ao renderizar este componente". Para limpar só esse domínio: com o site aberto, pressione F12, vá em **Application**, depois **Storage** e clique em **Clear site data**. Também dá pelo cadeado da barra de endereço, em **Cookies e dados do site**.
 
   O script não mexe no `.env`, nos certificados nem na rede `net_nginx_pm`. Os testes ficam em `./test_remove.sh`, com `docker` simulado.
 
@@ -334,5 +335,7 @@ docker network inspect net_nginx_pm --verbose --format '{{range $k,$v := .Servic
 
 - `depends_on` do Compose não controla ordem no Swarm; os serviços sobem de forma independente.
 - **Primeira subida demora:** a migração do banco (`flask upgrade-db`) roda no `api`, no `worker` e no `worker_beat`; quem pegar a trava no Redis migra e os outros pulam. Com o banco vazio ela leva vários minutos (~6 min no WSL). Enquanto isso o `api` fica em `Starting` e o `nginx` reinicia com `host not found in upstream "dify_api"`, pois o Swarm só registra no DNS tarefas saudáveis. Isso é esperado: o `start_period: 15m` do healthcheck do `api` evita que o Swarm o mate no meio da migração. Acompanhe com `docker service logs -f dify_worker | grep -i migration`.
+- **Todos os serviços `1/1` não significa banco pronto:** o `api` pode ficar saudável com o banco ainda vazio, porque pula a migração quando outro serviço segura a trava. O `deploy.sh` espera a migração terminar antes de anunciar `Dify pronto`.
+- **Postgres na primeira subida:** com o volume vazio, o `initdb` leva quase 2 minutos no WSL. O `start_period: 5m` do healthcheck do `db_postgres` evita que o Swarm o mate no meio do `initdb`, o que deixaria o volume do banco pela metade.
 - Este setup usa **volumes nomeados locais**, adequado para **single-node**.
 - Para produção multi-nó, migre para storage compartilhado (NFS/driver distribuído) e políticas de placement.

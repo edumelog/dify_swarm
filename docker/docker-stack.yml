@@ -153,7 +153,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 30s
+      # Na primeira subida o initdb leva quase 2 min no WSL; com 30s o Swarm quase
+      # matou o Postgres no meio dele, o que deixaria o volume do banco pela metade.
+      start_period: 5m
     networks:
       - default
     deploy:

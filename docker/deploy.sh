@@ -25,6 +25,9 @@ NO_EXTRA_CA_FILE="${SCRIPT_DIR}/certs/no-extra-ca.pem"
 DEFAULT_CA_NAME="localCA.pem"
 NO_CA_ANSWER="nenhum"
 CA_NAME_PATTERN='^[A-Za-z0-9._-]+$'
+# Espera pós-deploy pelo Dify pronto (serviços no ar e banco migrado).
+DEPLOY_WAIT_TIMEOUT="${DEPLOY_WAIT_TIMEOUT:-1200}"
+DEPLOY_POLL_SECONDS="${DEPLOY_POLL_SECONDS:-10}"
 ENV_LINE_PATTERN='^[A-Za-z_][A-Za-z0-9_]*='
 URL_PATTERN='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
 HOSTNAME_PATTERN='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
@@ -374,6 +377,60 @@ export_env() {
   done
 }
 
+# service_container: acha o container em execução de um serviço da stack.
+# Entrada: $1 nome curto do serviço (ex.: db_postgres). Saída: ID do container em stdout (vazio se não houver).
+service_container() {
+  docker ps -q -f "label=com.docker.swarm.service.name=${STACK_NAME}_$1" | head -1
+}
+
+# pending_services: conta os serviços da stack que ainda não estão com todas as réplicas no ar.
+# Entrada: nenhuma. Saída: quantidade em stdout (jobs concluídos, como init_permissions, contam como prontos).
+pending_services() {
+  docker service ls --filter "label=com.docker.stack.namespace=${STACK_NAME}" --format '{{.Replicas}}' \
+    | grep -vE '^([0-9]+)/\1$|\(([0-9]+)/\2 completed\)$' | grep -c . || true
+}
+
+# db_version: lê a versão das migrações aplicadas no banco do Dify.
+# Entrada: ENV_VALUES carregado. Saída: versão em stdout; código diferente de 0 se o banco ainda não foi migrado.
+db_version() {
+  local container
+  container="$(service_container db_postgres)"
+  [[ -n "${container}" ]] || return 1
+  docker exec "${container}" psql -U "${ENV_VALUES[DB_USERNAME]:-postgres}" -d "${ENV_VALUES[DB_DATABASE]:-dify}" \
+    -Atc "select version_num from alembic_version" 2>/dev/null
+}
+
+# migration_locked: verifica se algum serviço segura a trava de migração no Redis.
+# Entrada: nenhuma. Saída: "1" se há migração em andamento, "0" se não, vazio se o Redis não respondeu.
+migration_locked() {
+  local container
+  container="$(service_container redis)"
+  [[ -n "${container}" ]] || return 0
+  docker exec "${container}" sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning exists db_upgrade_lock' 2>/dev/null || true
+}
+
+# wait_until_ready: depois do deploy, espera todos os serviços no ar, o banco migrado e nenhuma migração em andamento.
+# Entrada: ENV_VALUES carregado. Saída: progresso em stderr; encerra com erro se passar de DEPLOY_WAIT_TIMEOUT segundos.
+wait_until_ready() {
+  local start=${SECONDS} pending version lock status previous=""
+  echo "Aguardando o Dify ficar pronto (na primeira subida a migração do banco leva alguns minutos; Ctrl+C interrompe só a espera)..." >&2
+  while true; do
+    pending="$(pending_services)"
+    version="$(db_version || true)"
+    lock="$(migration_locked)"
+    if [[ "${pending}" == "0" && -n "${version}" && "${lock}" == "0" ]]; then
+      echo "Dify pronto: todos os serviços no ar e banco na versão ${version}. Acesse ${ENV_VALUES[CONSOLE_WEB_URL]}" >&2
+      return 0
+    fi
+    status="serviços pendentes: ${pending} | banco: ${version:-ainda não migrado} | migração em andamento: $([[ "${lock}" == "1" ]] && echo sim || echo não)"
+    [[ "${status}" == "${previous}" ]] || echo "  $(date +%H:%M:%S) ${status}" >&2
+    previous="${status}"
+    (( SECONDS - start < DEPLOY_WAIT_TIMEOUT )) \
+      || fail "o Dify não ficou pronto em ${DEPLOY_WAIT_TIMEOUT}s. Diagnóstico: 'docker stack services ${STACK_NAME}' e 'docker service logs ${STACK_NAME}_worker | grep -i migration'."
+    sleep "${DEPLOY_POLL_SECONDS}"
+  done
+}
+
 # deploy_swarm: confere os pré-requisitos do Swarm, valida o manifesto e faz o deploy após confirmação.
 # Entrada: ENV_VALUES carregado. Saída: stack implantada, ou encerra com erro/cancelamento.
 deploy_swarm() {
@@ -393,7 +450,8 @@ deploy_swarm() {
     return 0
   fi
   docker stack deploy -c "${STACK_FILE}" "${STACK_NAME}"
-  echo "Deploy enviado. Acompanhe com: docker stack services ${STACK_NAME}" >&2
+  echo "Deploy enviado." >&2
+  wait_until_ready
 }
 
 # deploy_compose: valida o docker-compose.yaml e sobe os serviços após confirmação.
