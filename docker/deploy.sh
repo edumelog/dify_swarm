@@ -19,6 +19,12 @@ ENV_EXAMPLE="${ENV_EXAMPLE:-${SCRIPT_DIR}/.env.example}"
 STACK_FILE="docker-stack.yml"
 COMPOSE_FILE="docker-compose.yaml"
 DEFAULT_PROXY_NETWORK="net_nginx_pm"
+# Pasta dos certificados públicos de CA (CERTS_DIR só é sobrescrita nos testes).
+CERTS_DIR="${CERTS_DIR:-${SCRIPT_DIR}/certs}"
+NO_EXTRA_CA_FILE="${SCRIPT_DIR}/certs/no-extra-ca.pem"
+DEFAULT_CA_NAME="localCA.pem"
+NO_CA_ANSWER="nenhum"
+CA_NAME_PATTERN='^[A-Za-z0-9._-]+$'
 ENV_LINE_PATTERN='^[A-Za-z_][A-Za-z0-9_]*='
 URL_PATTERN='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
 HOSTNAME_PATTERN='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
@@ -46,6 +52,8 @@ declare -A ENV_VALUES=()
 declare -A EXAMPLE_VALUES=()
 declare -A UPDATES=()
 UPDATE_ORDER=()
+# Caminho real do certificado de CA escolhido (vazio = nenhuma CA extra).
+CA_PATH=""
 
 # fail: escreve uma mensagem de erro em stderr e encerra com código 1.
 # Entrada: $* mensagem. Saída: nenhuma (encerra o script).
@@ -264,6 +272,59 @@ fill_public_host() {
     || warn "${ENV_VALUES[DIFY_PUBLIC_HOST_IP]}:443 não aceitou conexão a partir deste host; confira o IP (teste dentro do container na seção 8 do README.swarm.md)."
 }
 
+# ca_file_problem: descreve por que um arquivo não serve como certificado público de CA.
+# Entrada: $1 caminho do arquivo. Saída: descrição em stdout (vazia se o arquivo for válido).
+ca_file_problem() {
+  if [[ ! -f "$1" ]]; then
+    echo "não encontrado; copie o certificado público para lá e pressione Enter (ou digite outro nome)"
+  elif grep -q "PRIVATE KEY" "$1"; then
+    echo "contém chave privada; use só o certificado público da CA"
+  elif ! grep -q "BEGIN CERTIFICATE" "$1"; then
+    echo "não contém um certificado (BEGIN CERTIFICATE)"
+  fi
+}
+
+# fill_ca_file: no Swarm, pergunta qual certificado de CA em certs/ o web deve aceitar e só segue com um arquivo válido.
+# Entrada: ENV_VALUES carregado; respostas no stdin. Saída: CA_PATH definido e UPDATES preenchido se o valor mudou; encerra se a entrada acabar.
+fill_ca_file() {
+  local current="${ENV_VALUES[DIFY_EXTRA_CA_FILE]:-}" name answer problem value
+  name="${current##*/}"
+  name="${name:-${DEFAULT_CA_NAME}}"
+  echo "DIFY_EXTRA_CA_FILE: certificado público da CA que assina o domínio, em ${CERTS_DIR} (\"${NO_CA_ANSWER}\" se a CA for pública)." >&2
+  while true; do
+    printf 'Arquivo da CA [%s]: ' "${name}" >&2
+    read -r answer || fail "entrada encerrada sem um certificado de CA válido; o deploy não prossegue."
+    name="${answer:-${name}}"
+    if [[ "${name}" == "${NO_CA_ANSWER}" ]]; then
+      value=""
+      CA_PATH=""
+      break
+    fi
+    if [[ ! "${name}" =~ ${CA_NAME_PATTERN} ]]; then
+      echo "Nome inválido: informe só o nome do arquivo dentro de ${CERTS_DIR}." >&2
+      continue
+    fi
+    problem="$(ca_file_problem "${CERTS_DIR}/${name}")"
+    if [[ -z "${problem}" ]]; then
+      value="./certs/${name}"
+      CA_PATH="${CERTS_DIR}/${name}"
+      break
+    fi
+    echo "ALERTA: ${CERTS_DIR}/${name} ${problem}." >&2
+  done
+  [[ "${value}" == "${current}" ]] || set_update DIFY_EXTRA_CA_FILE "${value}"
+}
+
+# warn_ca_change: avisa se a CA escolhida difere do config da stack no ar (configs do Swarm são imutáveis).
+# Entrada: CA_PATH definido. Saída: aviso em stderr quando o deploy exigir remover a stack antes.
+warn_ca_change() {
+  local deployed wanted
+  deployed="$(docker config inspect "${STACK_NAME}_dify_web_extra_ca" --format '{{printf "%s" .Spec.Data}}' 2>/dev/null)" || return 0
+  wanted="$(cat "${CA_PATH:-${NO_EXTRA_CA_FILE}}")"
+  [[ "${deployed}" == "${wanted}" ]] \
+    || warn "o certificado da CA difere do que está na stack '${STACK_NAME}' no ar; como configs do Swarm são imutáveis, rode 'docker stack rm ${STACK_NAME}', aguarde a remoção e faça o deploy de novo."
+}
+
 # write_env_updates: grava UPDATES no .env após copiar o original para .env.bak.<data-hora>.
 # Entrada: UPDATES e UPDATE_ORDER preenchidos. Saída: .env atualizado preservando as demais linhas.
 write_env_updates() {
@@ -316,13 +377,12 @@ export_env() {
 # deploy_swarm: confere os pré-requisitos do Swarm, valida o manifesto e faz o deploy após confirmação.
 # Entrada: ENV_VALUES carregado. Saída: stack implantada, ou encerra com erro/cancelamento.
 deploy_swarm() {
-  local ca_file="${ENV_VALUES[DIFY_EXTRA_CA_FILE]:-./certs/no-extra-ca.pem}"
   local proxy_network="${ENV_VALUES[DIFY_PROXY_NETWORK]:-${DEFAULT_PROXY_NETWORK}}"
   [[ "$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)" == "true" ]] \
     || fail "este Docker não é manager de um Swarm ativo (rode 'docker swarm init' ou use um nó manager)."
   docker network inspect "${proxy_network}" >/dev/null 2>&1 \
     || fail "a rede externa '${proxy_network}' (DIFY_PROXY_NETWORK) não existe; crie-a com 'docker network create -d overlay --attachable ${proxy_network}'."
-  [[ -f "${ca_file}" ]] || fail "DIFY_EXTRA_CA_FILE aponta para '${ca_file}', que não existe."
+  warn_ca_change
 
   export_env
   docker stack config -c "${STACK_FILE}" >/dev/null || fail "o manifesto ${STACK_FILE} é inválido."
@@ -373,7 +433,10 @@ main() {
   if [[ -z "${mode}" ]]; then
     mode="$(ask_swarm_mode)" || exit 1
   fi
-  [[ "${mode}" != "swarm" ]] || fill_public_host
+  if [[ "${mode}" == "swarm" ]]; then
+    fill_public_host
+    fill_ca_file
+  fi
   write_env_updates
   check_env "${mode}"
   echo "Variáveis do ${ENV_FILE} conferidas." >&2

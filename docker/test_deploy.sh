@@ -26,7 +26,7 @@ check() {
 }
 
 # Stub do docker: registra cada chamada em MOCK_LOG e responde conforme MOCK_MANAGER/MOCK_NETWORK/MOCK_PG_VOLUME;
-# `network inspect bridge` devolve o gateway MOCK_BRIDGE_GW.
+# `network inspect bridge` devolve o gateway MOCK_BRIDGE_GW; `config inspect` devolve MOCK_CA_CONFIG (ou falha se vazio).
 mkdir -p "${WORK_DIR}/bin"
 cat > "${WORK_DIR}/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -36,6 +36,7 @@ case "$1" in
   network)
     if [[ "$3" == "bridge" ]]; then echo "${MOCK_BRIDGE_GW:-172.30.0.1}"; else [[ "${MOCK_NETWORK:-1}" == "1" ]]; fi ;;
   volume) [[ "${MOCK_PG_VOLUME:-0}" == "1" ]] ;;
+  config) [[ -n "${MOCK_CA_CONFIG:-}" ]] && printf '%s\n' "${MOCK_CA_CONFIG}" ;;
   stack) [[ "$2" != "config" ]] || echo "SECRET_KEY_SEEN=${SECRET_KEY:-}" >> "${MOCK_LOG}" ;;
 esac
 EOF
@@ -54,7 +55,14 @@ WEAVIATE_API_KEY=public-weaviate
 WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS=public-weaviate
 CONSOLE_API_URL=
 EOF
-touch "${WORK_DIR}/ca.pem"
+# Pasta de certificados dos testes (CERTS_DIR): CAs públicas válidas, um arquivo com chave e um que não é certificado.
+CERTS_DIR="${WORK_DIR}/certs"
+mkdir -p "${CERTS_DIR}"
+CA_CONTENT="$(printf '%s\n' '-----BEGIN CERTIFICATE-----' 'MIIBfakeca' '-----END CERTIFICATE-----')"
+for name in ca.pem localCA.pem outra.pem; do printf '%s\n' "${CA_CONTENT}" > "${CERTS_DIR}/${name}"; done
+printf '%s\n' "${CA_CONTENT}" '-----BEGIN PRIVATE KEY-----' 'MIIEsecret' '-----END PRIVATE KEY-----' > "${CERTS_DIR}/chave.pem"
+printf 'texto qualquer\n' > "${CERTS_DIR}/lixo.pem"
+export CERTS_DIR
 
 # make_env: grava um .env válido em $1, aplicando as substituições KEY=valor passadas a seguir.
 # Entrada: $1 caminho do .env, $2.. pares KEY=valor (valor vazio permitido). Saída: arquivo gravado.
@@ -79,7 +87,7 @@ FILES_URL=https://dify.hmg.dti
 LOG_DATEFORMAT=%Y-%m-%d %H:%M:%S
 DIFY_PUBLIC_HOST=dify.hmg.dti
 DIFY_PUBLIC_HOST_IP=127.0.0.1
-DIFY_EXTRA_CA_FILE=${WORK_DIR}/ca.pem
+DIFY_EXTRA_CA_FILE=./certs/ca.pem
 EOF
   for pair in "$@"; do
     key="${pair%%=*}"
@@ -138,7 +146,7 @@ test_generate_secrets() {
   make_env "${env}" "SECRET_KEY=" "DB_PASSWORD=difyai123456" \
     "WEAVIATE_API_KEY=public-weaviate" "WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS=public-weaviate"
   before="$(cat "${env}")"
-  run_deploy "${env}" "g\nn\n" --swarm
+  run_deploy "${env}" "g\n\nn\n" --swarm
   secret="$(env_value "${env}" SECRET_KEY)"
   check "segue até a confirmação após gerar" "$([[ ${RC} -eq 0 ]] && grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
   check "gera SECRET_KEY alfanumérica de 42 caracteres" "$([[ "${secret}" =~ ^[A-Za-z0-9]{42}$ ]]; echo $?)"
@@ -155,7 +163,7 @@ test_generate_secrets() {
 test_type_secrets() {
   local env="${WORK_DIR}/type.env"
   make_env "${env}" "SECRET_KEY=" "REDIS_PASSWORD=difyai123456"
-  run_deploy "${env}" "d\nminha-chave\n\nn\n" --swarm
+  run_deploy "${env}" "d\nminha-chave\n\n\nn\n" --swarm
   check "grava o valor digitado" "$([[ "$(env_value "${env}" SECRET_KEY)" == "minha-chave" ]]; echo $?)"
   check "gera quando a resposta é vazia" "$([[ "$(env_value "${env}" REDIS_PASSWORD)" =~ ^[A-Za-z0-9]{42}$ ]]; echo $?)"
 }
@@ -176,7 +184,7 @@ test_cancel_secrets() {
 test_fill_urls() {
   local env="${WORK_DIR}/urls.env"
   make_env "${env}" "CONSOLE_API_URL=" "FILES_URL="
-  run_deploy "${env}" "ftp://x.dti\nhttps://x.dti/\n\nn\n" --swarm
+  run_deploy "${env}" "ftp://x.dti\nhttps://x.dti/\n\n\nn\n" --swarm
   check "recusa URL inválida" "$(grep -q "inválida" <<<"${OUT}"; echo $?)"
   check "grava a URL digitada sem barra final" "$([[ "$(env_value "${env}" CONSOLE_API_URL)" == "https://x.dti" ]]; echo $?)"
   check "Enter repete a URL anterior" "$([[ "$(env_value "${env}" FILES_URL)" == "https://x.dti" ]]; echo $?)"
@@ -188,7 +196,7 @@ test_fill_urls() {
 test_postgres_volume_warning() {
   local env="${WORK_DIR}/pg.env"
   make_env "${env}" "DB_PASSWORD=difyai123456"
-  MOCK_PG_VOLUME=1 run_deploy "${env}" "g\nn\n" --swarm
+  MOCK_PG_VOLUME=1 run_deploy "${env}" "g\n\nn\n" --swarm
   check "avisa sobre o volume do Postgres existente" "$(grep -q "AVISO.*dify_postgres_data" <<<"${OUT}"; echo $?)"
 }
 
@@ -197,7 +205,7 @@ test_postgres_volume_warning() {
 test_weaviate_mismatch() {
   local env="${WORK_DIR}/weaviate.env"
   make_env "${env}" "WEAVIATE_API_KEY=outra"
-  run_deploy "${env}" "" --swarm
+  run_deploy "${env}" "\n" --swarm
   check "falha com chaves do Weaviate diferentes" "$([[ ${RC} -ne 0 ]]; echo $?)"
   check "mensagem cita o Weaviate" "$(grep -q "WEAVIATE" <<<"${OUT}"; echo $?)"
 }
@@ -207,7 +215,7 @@ test_weaviate_mismatch() {
 test_mixed_origins_warns() {
   local env="${WORK_DIR}/origins.env"
   make_env "${env}" "FILES_URL=http://outro.dti"
-  run_deploy "${env}" "n\n" --swarm
+  run_deploy "${env}" "\nn\n" --swarm
   check "avisa sobre origens diferentes" "$(grep -q "AVISO.*origem" <<<"${OUT}"; echo $?)"
   check "segue até a confirmação" "$(grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
 }
@@ -217,7 +225,7 @@ test_mixed_origins_warns() {
 test_swarm_deploy() {
   local env="${WORK_DIR}/ok.env"
   make_env "${env}"
-  run_deploy "${env}" "s\ns\n"
+  run_deploy "${env}" "s\n\ns\n"
   check "termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
   check "pergunta se é Swarm" "$(grep -q "Swarm" <<<"${OUT}"; echo $?)"
   check "exporta o .env antes do stack config" "$(grep -q "SECRET_KEY_SEEN=real-secret" "${MOCK_LOG}"; echo $?)"
@@ -230,7 +238,7 @@ test_swarm_deploy() {
 test_swarm_cancel() {
   local env="${WORK_DIR}/ok.env"
   make_env "${env}"
-  run_deploy "${env}" "n\n" --swarm
+  run_deploy "${env}" "\nn\n" --swarm
   check "cancelamento termina sem erro" "$([[ ${RC} -eq 0 ]]; echo $?)"
   check "valida o manifesto" "$(grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
   check "não faz deploy" "$(! grep -q "stack deploy" "${MOCK_LOG}"; echo $?)"
@@ -241,13 +249,10 @@ test_swarm_cancel() {
 test_swarm_prerequisites() {
   local env="${WORK_DIR}/ok.env"
   make_env "${env}"
-  MOCK_MANAGER=false run_deploy "${env}" "s\n" --swarm
+  MOCK_MANAGER=false run_deploy "${env}" "\n" --swarm
   check "falha fora de um manager" "$([[ ${RC} -ne 0 ]] && grep -q "manager" <<<"${OUT}"; echo $?)"
-  MOCK_NETWORK=0 run_deploy "${env}" "s\n" --swarm
+  MOCK_NETWORK=0 run_deploy "${env}" "\n" --swarm
   check "falha sem a rede net_nginx_pm" "$([[ ${RC} -ne 0 ]] && grep -q "net_nginx_pm" <<<"${OUT}"; echo $?)"
-  make_env "${env}" "DIFY_EXTRA_CA_FILE=${WORK_DIR}/sem-ca.pem"
-  run_deploy "${env}" "s\n" --swarm
-  check "falha sem o arquivo da CA" "$([[ ${RC} -ne 0 ]] && grep -q "DIFY_EXTRA_CA_FILE" <<<"${OUT}"; echo $?)"
   check "não faz deploy com pré-requisito faltando" "$(! grep -q "stack deploy" "${MOCK_LOG}"; echo $?)"
 }
 
@@ -256,7 +261,7 @@ test_swarm_prerequisites() {
 test_fill_public_host_suggestions() {
   local env="${WORK_DIR}/host.env"
   make_env "${env}" "DIFY_PUBLIC_HOST=" "DIFY_PUBLIC_HOST_IP="
-  run_deploy "${env}" "s\n\n\nn\n"
+  run_deploy "${env}" "s\n\n\n\nn\n"
   check "sugere e grava o host de CONSOLE_API_URL" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST)" == "dify.hmg.dti" ]]; echo $?)"
   check "sugere e grava o gateway da rede bridge" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST_IP)" == "172.30.0.1" ]]; echo $?)"
   check "segue até a confirmação" "$([[ ${RC} -eq 0 ]] && grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
@@ -267,7 +272,7 @@ test_fill_public_host_suggestions() {
 test_fill_public_host_typed() {
   local env="${WORK_DIR}/host-typed.env"
   make_env "${env}" "DIFY_PUBLIC_HOST=" "DIFY_PUBLIC_HOST_IP="
-  run_deploy "${env}" "chat.prd.dti\n999.1.1.1\n10.1.2.3\nn\n" --swarm
+  run_deploy "${env}" "chat.prd.dti\n999.1.1.1\n10.1.2.3\n\nn\n" --swarm
   check "grava o domínio digitado" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST)" == "chat.prd.dti" ]]; echo $?)"
   check "recusa IP inválido" "$(grep -q "IP inválido" <<<"${OUT}"; echo $?)"
   check "grava o IP digitado" "$([[ "$(env_value "${env}" DIFY_PUBLIC_HOST_IP)" == "10.1.2.3" ]]; echo $?)"
@@ -287,10 +292,10 @@ test_compose_skips_public_host() {
 test_proxy_network_from_env() {
   local env="${WORK_DIR}/net.env"
   make_env "${env}"
-  run_deploy "${env}" "n\n" --swarm
+  run_deploy "${env}" "\nn\n" --swarm
   check "usa net_nginx_pm por padrão" "$(grep -q "docker network inspect net_nginx_pm" "${MOCK_LOG}"; echo $?)"
   make_env "${env}" "DIFY_PROXY_NETWORK=proxy_hmg"
-  run_deploy "${env}" "n\n" --swarm
+  run_deploy "${env}" "\nn\n" --swarm
   check "usa DIFY_PROXY_NETWORK do .env" "$(grep -q "docker network inspect proxy_hmg" "${MOCK_LOG}"; echo $?)"
 }
 
@@ -301,6 +306,90 @@ test_stack_has_no_environment_defaults() {
   check "stack exige DIFY_PUBLIC_HOST" "$(grep -q 'DIFY_PUBLIC_HOST:?' "${stack}"; echo $?)"
   check "stack exige DIFY_PUBLIC_HOST_IP" "$(grep -q 'DIFY_PUBLIC_HOST_IP:?' "${stack}"; echo $?)"
   check "stack sem IP ou domínio de ambiente" "$(! grep -qE '\.dev\.dti|\.hmg\.dti|10\.0\.2\.2|172\.17\.' "${stack}"; echo $?)"
+}
+
+# test_ca_default_suggestion: sem DIFY_EXTRA_CA_FILE, Enter aceita localCA.pem e grava o caminho no .env.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_default_suggestion() {
+  local env="${WORK_DIR}/ca-default.env"
+  make_env "${env}" "DIFY_EXTRA_CA_FILE="
+  run_deploy "${env}" "\nn\n" --swarm
+  check "sugere localCA.pem" "$(grep -q "\[localCA.pem\]" <<<"${OUT}"; echo $?)"
+  check "grava ./certs/localCA.pem" "$([[ "$(env_value "${env}" DIFY_EXTRA_CA_FILE)" == "./certs/localCA.pem" ]]; echo $?)"
+}
+
+# test_ca_keeps_current: com DIFY_EXTRA_CA_FILE preenchida, Enter mantém o arquivo atual sem regravar o .env.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_keeps_current() {
+  local env="${WORK_DIR}/ca-keep.env"
+  rm -f "${env}".bak.*
+  make_env "${env}"
+  run_deploy "${env}" "\nn\n" --swarm
+  check "sugere o arquivo atual" "$(grep -q "\[ca.pem\]" <<<"${OUT}"; echo $?)"
+  check "não regrava o .env" "$(! ls "${env}".bak.* >/dev/null 2>&1; echo $?)"
+}
+
+# test_ca_custom_name: o operador pode trocar o nome por outro arquivo existente em certs/.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_custom_name() {
+  local env="${WORK_DIR}/ca-custom.env"
+  make_env "${env}"
+  run_deploy "${env}" "outra.pem\nn\n" --swarm
+  check "grava o nome digitado" "$([[ "$(env_value "${env}" DIFY_EXTRA_CA_FILE)" == "./certs/outra.pem" ]]; echo $?)"
+}
+
+# test_ca_missing_alerts: arquivo ausente gera alerta e repete; sem resposta, não prossegue.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_missing_alerts() {
+  local env="${WORK_DIR}/ca-missing.env" alerts
+  make_env "${env}"
+  run_deploy "${env}" "faltando.pem\n\nca.pem\nn\n" --swarm
+  alerts="$(grep -c "ALERTA.*faltando.pem" <<<"${OUT}")"
+  check "alerta a cada tentativa com o arquivo ausente" "$([[ ${alerts} -eq 2 ]]; echo $?)"
+  check "aceita quando o arquivo existe" "$([[ "$(env_value "${env}" DIFY_EXTRA_CA_FILE)" == "./certs/ca.pem" && ${RC} -eq 0 ]]; echo $?)"
+  run_deploy "${env}" "faltando.pem\n" --swarm
+  check "sem o arquivo não prossegue" "$([[ ${RC} -ne 0 ]] && ! grep -q "docker stack" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_ca_none: "nenhum" grava DIFY_EXTRA_CA_FILE vazio (CA pública, sem CA extra).
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_none() {
+  local env="${WORK_DIR}/ca-none.env"
+  make_env "${env}"
+  run_deploy "${env}" "nenhum\nn\n" --swarm
+  check "nenhum grava valor vazio" "$(grep -qx "DIFY_EXTRA_CA_FILE=" "${env}"; echo $?)"
+  check "nenhum segue até a confirmação" "$(grep -q "docker stack config" "${MOCK_LOG}"; echo $?)"
+}
+
+# test_ca_rejects_invalid_files: recusa arquivo com chave privada ou sem certificado.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_rejects_invalid_files() {
+  local env="${WORK_DIR}/ca-invalid.env"
+  make_env "${env}"
+  run_deploy "${env}" "chave.pem\nlixo.pem\nca.pem\nn\n" --swarm
+  check "recusa arquivo com chave privada" "$(grep -q "chave.pem.*chave privada" <<<"${OUT}"; echo $?)"
+  check "recusa arquivo sem certificado" "$(grep -q "lixo.pem.*BEGIN CERTIFICATE" <<<"${OUT}"; echo $?)"
+  check "fica com o certificado válido" "$([[ "$(env_value "${env}" DIFY_EXTRA_CA_FILE)" == "./certs/ca.pem" ]]; echo $?)"
+}
+
+# test_ca_config_change_warning: avisa quando a CA escolhida difere do config da stack no ar.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_ca_config_change_warning() {
+  local env="${WORK_DIR}/ca-change.env"
+  make_env "${env}"
+  MOCK_CA_CONFIG="outro conteúdo" run_deploy "${env}" "\nn\n" --swarm
+  check "avisa sobre CA diferente da stack no ar" "$(grep -q "AVISO.*docker stack rm" <<<"${OUT}"; echo $?)"
+  MOCK_CA_CONFIG="${CA_CONTENT}" run_deploy "${env}" "\nn\n" --swarm
+  check "não avisa com a mesma CA" "$(! grep -q "docker stack rm" <<<"${OUT}"; echo $?)"
+}
+
+# test_certs_gitignore: só o localCA.pem de docker/certs/ é versionado; chaves continuam ignoradas.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_certs_gitignore() {
+  check "localCA.pem é versionável" "$(! git -C "${SCRIPT_DIR}" check-ignore -q --no-index certs/localCA.pem; echo $?)"
+  check "chaves em certs/ são ignoradas" "$(git -C "${SCRIPT_DIR}" check-ignore -q --no-index certs/localCA.key; echo $?)"
+  check "outras CAs em certs/ são ignoradas" "$(git -C "${SCRIPT_DIR}" check-ignore -q --no-index certs/producao.pem; echo $?)"
+  check "localCA.pem versionado não contém chave privada" "$(! grep -q "PRIVATE KEY" "${SCRIPT_DIR}/certs/localCA.pem"; echo $?)"
 }
 
 # test_compose_deploy: sem Swarm valida e sobe com docker compose.
@@ -320,7 +409,7 @@ test_compose_deploy() {
 test_mode_question_requires_answer() {
   local env="${WORK_DIR}/mode.env" asked
   make_env "${env}"
-  run_deploy "${env}" "\nsim\nx\nS\nn\n"
+  run_deploy "${env}" "\nsim\nx\nS\n\nn\n"
   asked="$(grep -o "Subir com Docker Swarm?" <<<"${OUT}" | wc -l)"
   check "repete a pergunta até receber s/S/n/N" "$([[ ${asked} -eq 4 ]]; echo $?)"
   check "S maiúsculo escolhe o Swarm" "$(grep -q "docker stack config" "${MOCK_LOG}" && ! grep -q "docker compose" "${MOCK_LOG}"; echo $?)"
@@ -354,6 +443,14 @@ test_fill_public_host_typed
 test_compose_skips_public_host
 test_proxy_network_from_env
 test_stack_has_no_environment_defaults
+test_ca_default_suggestion
+test_ca_keeps_current
+test_ca_custom_name
+test_ca_missing_alerts
+test_ca_none
+test_ca_rejects_invalid_files
+test_ca_config_change_warning
+test_certs_gitignore
 test_compose_deploy
 test_mode_question_requires_answer
 test_invalid_argument

@@ -177,6 +177,8 @@ docker/volumes/minio/*
 docker/volumes/milvus/*
 docker/certs/*
 !docker/certs/no-extra-ca.pem
+# Só o certificado PÚBLICO da CA interna de dev/hmg é versionado; chaves e outras CAs ficam fora.
+!docker/certs/localCA.pem
 docker/volumes/chroma/*
 docker/volumes/opensearch/data/*
 docker/volumes/myscale/data/*

@@ -52,7 +52,7 @@ Gere cada segredo com `openssl rand -base64 42`.
 | `SERVICE_API_URL` | URL base da Service API exibida no console. Vazio = usa a URL atual do navegador. | `https://dify.hmg.dti` | Não |
 | `DIFY_PUBLIC_HOST` | Domínio público, injetado no `extra_hosts` do `web` (seção 8). Sem padrão: o deploy no Swarm falha se estiver vazia. | `dify.hmg.dti` | Sim, no Swarm |
 | `DIFY_PUBLIC_HOST_IP` | IP pelo qual o container `web` alcança o Nginx Proxy Manager na 443 (seção 8). Sem padrão. | `10.100.2.25` | Sim, no Swarm |
-| `DIFY_EXTRA_CA_FILE` | Certificado **público** da CA interna que assina o domínio (nunca a `.key`), em `docker/certs/` (seção 8). Padrão: `./certs/no-extra-ca.pem` (nenhuma CA extra). | `./certs/localCA.pem` | Só com HTTPS de CA interna |
+| `DIFY_EXTRA_CA_FILE` | Certificado **público** da CA que assina o domínio (nunca a `.key`), em `docker/certs/` (seção 8). O `localCA.pem` de dev/hmg já vem no repositório; vazio = CA pública. O `deploy.sh` pergunta o arquivo. | `./certs/localCA.pem` | Sim, no Swarm (ou vazio) |
 | `DIFY_PROXY_NETWORK` | Rede overlay externa compartilhada com o Nginx Proxy Manager. | `net_nginx_pm` (padrão) | Não |
 
 Use a mesma origem (protocolo + domínio) em todas as URLs públicas.
@@ -91,7 +91,7 @@ Atenção: se o banco já existir, uma `DB_PASSWORD` nova no `.env` não muda a 
 
 Em seguida, pergunta se a subida é com Docker Swarm e então:
 
-- **Swarm:** pede `DIFY_PUBLIC_HOST` e `DIFY_PUBLIC_HOST_IP` se estiverem vazios, sugerindo o host de `CONSOLE_API_URL` e o gateway da rede `bridge` (seção 8). Depois confere se o nó é manager e se a rede `DIFY_PROXY_NETWORK` (padrão `net_nginx_pm`) e o arquivo de `DIFY_EXTRA_CA_FILE` existem, exporta o `.env`, valida o manifesto e roda `docker stack deploy` após confirmação;
+- **Swarm:** pede `DIFY_PUBLIC_HOST` e `DIFY_PUBLIC_HOST_IP` se estiverem vazios, sugerindo o host de `CONSOLE_API_URL` e o gateway da rede `bridge` (seção 8). Pergunta o arquivo da CA em `docker/certs/` (padrão `localCA.pem`) e não prossegue sem um certificado válido. Depois confere se o nó é manager e se a rede `DIFY_PROXY_NETWORK` (padrão `net_nginx_pm`) existe, exporta o `.env`, valida o manifesto e roda `docker stack deploy` após confirmação;
 - **sem Swarm:** valida e sobe o `docker-compose.yaml` com `docker compose up -d` após confirmação.
 
 ```bash
@@ -179,21 +179,71 @@ DIFY_PUBLIC_HOST_IP=10.100.2.25
 DIFY_EXTRA_CA_FILE=./certs/localCA.pem
 ```
 
-Copie o certificado público da CA para `docker/certs/` (a pasta é ignorada pelo git):
+O certificado público da CA interna de dev e hmg, `docker/certs/localCA.pem`, **já vem no repositório** (veja "Para que serve o certificado da CA" abaixo). Para outra CA, copie o certificado público dela para `docker/certs/` (esse arquivo não é versionado):
 
 ```bash
-cp /caminho/para/localCA.pem docker/certs/localCA.pem
+cp /caminho/para/outra-ca.pem docker/certs/outra-ca.pem
 ```
 
 Como descobrir os valores em qualquer servidor:
 
 - `DIFY_PUBLIC_HOST`: o host de `CONSOLE_API_URL`, que é o domínio do Proxy Host no NGPM. O `deploy.sh` sugere esse valor.
 - `DIFY_PUBLIC_HOST_IP`: um IP que, **de dentro de um container**, chegue ao NGPM na 443. O gateway da rede `bridge` costuma funcionar e não muda com reinícios. Descubra-o com `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`; o `deploy.sh` sugere esse valor. Também serve o IP fixo do servidor na rede. Não use um VIP do Swarm, que muda a cada deploy, nem o IP do WSL (`hostname -I`), que muda a cada reinício.
-- `DIFY_EXTRA_CA_FILE`: o certificado da CA que emitiu o certificado do Proxy Host. Confira com `openssl verify -CAfile <ca.pem> <fullchain.pem>`.
+- `DIFY_EXTRA_CA_FILE`: o certificado da CA que emitiu o certificado do Proxy Host. O `deploy.sh` pergunta o nome do arquivo (veja abaixo).
 
 Sintomas de valor errado no log do `web`: `connect EHOSTUNREACH <ip>:443` ou `getaddrinfo ENOTFOUND` (IP ou domínio errados) e `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (CA ausente ou errada).
 
-O certificado vira o config `dify_web_extra_ca` e é carregado via `NODE_EXTRA_CA_CERTS`. Como configs do Swarm são imutáveis, ao **trocar** o certificado é preciso remover a stack antes do deploy (ou renomear o config).
+### Para que serve o certificado da CA
+
+Ao abrir `https://<domínio>`, há duas conexões HTTPS diferentes:
+
+```
+1) navegador ──HTTPS──> NGPM (certificado do domínio) ──> dify_nginx ──> web/api
+
+2) container web (Node, SSR) ──HTTPS──> https://<domínio> (NGPM) ──> dify_nginx ──> api
+```
+
+1. **Navegador → NGPM:** o navegador confia no certificado porque a CA está instalada no Windows (ou porque é uma CA pública). O arquivo da stack não participa dessa conexão.
+2. **SSR → NGPM:** ao renderizar a página no servidor, o Next.js chama `CONSOLE_API_URL` passando pelo NGPM. O Node.js **não usa** o repositório de certificados do Windows nem o do sistema: ele traz a própria lista de CAs públicas. Se a CA do domínio for interna, a chamada falha com `UNABLE_TO_VERIFY_LEAF_SIGNATURE` e o navegador mostra "Ocorreu um erro inesperado ao renderizar este componente".
+
+Como o arquivo é usado:
+
+1. `DIFY_EXTRA_CA_FILE` no `.env` aponta para o arquivo (ex.: `./certs/localCA.pem`).
+2. O `docker-stack.yml` transforma esse arquivo no config `dify_web_extra_ca`.
+3. O config é montado **só no container `web`**, em `/etc/ssl/dify/extra-ca.pem`.
+4. `NODE_EXTRA_CA_CERTS=/etc/ssl/dify/extra-ca.pem` faz o Node **somar** essa CA às públicas que ele já conhece. Chamadas a sites públicos continuam funcionando.
+
+Os outros serviços (`api`, `worker`, `nginx`) não usam esse arquivo.
+
+| Ambiente | Quem assina o certificado do NGPM | `DIFY_EXTRA_CA_FILE` |
+|---|---|---|
+| dev | `localCA` | `./certs/localCA.pem` (versionado) |
+| hmg | `localCA` | `./certs/localCA.pem` (versionado) |
+| produção, com CA pública (Let's Encrypt, comercial) | uma CA que o Node já conhece | vazio: responda `nenhum` no `deploy.sh` |
+| produção, com CA corporativa | essa CA | o `.pem` público **dessa** CA, copiado para `docker/certs/` |
+
+Para descobrir quem assina o certificado servido pelo NGPM, e conferir se a CA certa foi escolhida:
+
+```bash
+openssl s_client -connect <domínio>:443 -servername <domínio> </dev/null 2>/dev/null | openssl x509 -noout -issuer
+openssl verify -CAfile docker/certs/<ca>.pem <fullchain.pem>
+```
+
+**Versionamento:** a pasta `docker/certs/` é ignorada pelo git, com exceção do `no-extra-ca.pem` e do `localCA.pem`. O `localCA.pem` é só o certificado **público** (o mesmo que qualquer navegador recebe), então pode ir para o repositório. A chave `localCA.key` **nunca** deve ser copiada para cá: se vazar, qualquer pessoa pode emitir certificados válidos para os domínios `*.dti`. Qualquer outro arquivo em `docker/certs/`, inclusive chaves e CAs de produção, continua fora do git.
+
+**Pergunta do `deploy.sh`:** no modo Swarm, o script pergunta o arquivo da CA dentro de `docker/certs/`:
+
+```
+Arquivo da CA [localCA.pem]:
+```
+
+- Enter aceita o sugerido: o valor atual de `DIFY_EXTRA_CA_FILE` ou, se estiver vazio, `localCA.pem`. Também é possível digitar outro nome.
+- Se o arquivo não existir, o script mostra `ALERTA: ... não encontrado` e repete a pergunta até o arquivo ser colocado na pasta (pressione Enter depois de copiá-lo) ou até ser informado outro nome. Ele **não prossegue** sem um arquivo válido.
+- Também é recusado um arquivo que contenha chave privada (`PRIVATE KEY`) ou que não tenha `BEGIN CERTIFICATE`.
+- `nenhum` grava `DIFY_EXTRA_CA_FILE=` vazio, para CA pública.
+- O valor escolhido é gravado no `.env` como `./certs/<arquivo>`.
+
+**Troca de certificado:** a CA vira um config do Swarm, e configs do Swarm são imutáveis. Se o certificado escolhido for diferente do que está na stack no ar, o `deploy.sh` avisa. Nesse caso, remova a stack (`docker stack rm <stack>`), espere a remoção terminar e faça o deploy de novo. Os volumes e os dados são preservados.
 
 Para testar de dentro do container:
 
