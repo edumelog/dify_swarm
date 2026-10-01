@@ -273,6 +273,19 @@ docker service update --force dify_api
 docker stack rm dify
 ```
 
+- Remover a stack com o script, que também espera a remoção terminar e oferece apagar os volumes:
+
+```bash
+./remove.sh                     # stack "dify"
+STACK_NAME=difytest ./remove.sh # outra stack
+```
+
+  O script lista os serviços e os volumes da stack, que ele identifica pelo label `com.docker.stack.namespace`, e pergunta `Apagar também os volumes (dados)? [s/n]`. Essa pergunta só aceita s/S/n/N.
+  - Com `n`, remove a stack, espera a remoção terminar e **mantém** os volumes. Um novo deploy com o mesmo `STACK_NAME` reaproveita os dados e as senhas gravadas no banco, então use o mesmo `.env`.
+  - Com `s`, exige que você digite o nome da stack para confirmar. Depois remove a stack e apaga **todos** os volumes dela: banco, arquivos, bases vetoriais e volumes antigos. Isso não pode ser desfeito. Se a confirmação não conferir, nada é removido.
+
+  O script não mexe no `.env`, nos certificados nem na rede `net_nginx_pm`. Os testes ficam em `./test_remove.sh`, com `docker` simulado.
+
 - Alterações em arquivos de `nginx/` ou `ssrf_proxy/`: os `configs` do Swarm são imutáveis, então um redeploy com conteúdo alterado falha. Remova a stack, aguarde a remoção terminar e faça o deploy de novo:
 
 ```bash
