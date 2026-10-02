@@ -4,34 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Manuais da base de conhecimento{% endblock %}</title>
+<script>
+  // Aplica o tema antes de desenhar a página (sem piscar): escolha salva ou, sem ela, a do sistema.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem("kb_admin_theme"); } catch (error) { theme = null; }
+    if (theme !== "dark" && theme !== "light") {
+      theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
 <style>
   :root { --bg: #f6f7f9; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --accent: #1f6feb;
-          --danger: #cf222e; --warn-bg: #fff8c5; --err-bg: #ffebe9; --ok-bg: #dafbe1; }
+          --danger: #cf222e; --warn-bg: #fff8c5; --err-bg: #ffebe9; --ok-bg: #dafbe1;
+          --surface: #ffffff; --surface-2: #eff2f5; color-scheme: light; }
+  :root[data-theme="dark"] { --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d; --accent: #2f81f7;
+          --danger: #da3633; --warn-bg: #3b2f05; --err-bg: #4a1b1e; --ok-bg: #12321f;
+          --surface: #161b22; --surface-2: #21262d; color-scheme: dark; }
   body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
-  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 16px;
+  header { background: var(--surface); border-bottom: 1px solid var(--line); padding: 12px 16px;
            display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
   header a { color: var(--fg); text-decoration: none; }
   header .env, small { color: var(--muted); }
   .tabs { display: flex; gap: 4px; }
   .tabs a { padding: 6px 10px; border-radius: 6px; color: var(--muted); }
-  .tabs a.active { background: #eff2f5; color: var(--fg); font-weight: 600; }
-  header form { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .tabs a.active { background: var(--surface-2); color: var(--fg); font-weight: 600; }
+  header .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  header form { display: flex; gap: 8px; align-items: center; }
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-  table { width: 100%; border-collapse: collapse; background: #fff; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .box { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .box { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin: 16px 0; }
   .msg { padding: 12px 16px; border-radius: 6px; margin: 12px 0; }
   .msg.error { background: var(--err-bg); } .msg.warn { background: var(--warn-bg); } .msg.ok { background: var(--ok-bg); }
   button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px;
                     cursor: pointer; text-decoration: none; display: inline-block; font-size: 1em; }
   .danger { background: var(--danger); }
-  .secondary { background: #fff; color: var(--fg); border: 1px solid var(--line); }
+  .secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--line); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  code { background: #eff2f5; padding: 1px 4px; border-radius: 4px; }
+  code { background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
   .changed { background: var(--warn-bg); }
   .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-  .gallery figure { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
-  .gallery img { width: 100%; height: auto; }
+  .gallery figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .gallery img { width: 100%; height: auto; background: #fff; }
+  input { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px; }
+  a { color: var(--accent); }
   .gallery figcaption { font-size: .8em; color: var(--muted); word-break: break-all; }
 </style>
 </head>
@@ -45,13 +63,16 @@
   </nav>
   {% endif %}
   <span class="env">Imagens publicadas em <code>{{ assets_base_url }}/</code></span>
-  {% if user %}
-  <form method="post" action="{{ prefix }}/logout">
-    <span class="env">{{ user.email }}</span>
-    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-    <button class="secondary" type="submit">Sair</button>
-  </form>
-  {% endif %}
+  <div class="header-right">
+    <button type="button" id="theme-toggle" class="secondary" title="Alternar modo claro/escuro">🌙 Modo escuro</button>
+    {% if user %}
+    <form method="post" action="{{ prefix }}/logout">
+      <span class="env">{{ user.email }}</span>
+      <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+      <button class="secondary" type="submit">Sair</button>
+    </form>
+    {% endif %}
+  </div>
 </header>
 <main>{% block content %}{% endblock %}</main>
 <script>
@@ -66,6 +87,19 @@
     area.remove();
     return Promise.resolve();
   }
+  // Botão de tema: mostra a opção oposta à atual e guarda a escolha no navegador.
+  var themeToggle = document.getElementById("theme-toggle");
+  function showThemeLabel() {
+    var dark = document.documentElement.getAttribute("data-theme") === "dark";
+    themeToggle.textContent = dark ? "☀️ Modo claro" : "🌙 Modo escuro";
+  }
+  themeToggle.addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("kb_admin_theme", next); } catch (error) { /* navegador sem armazenamento */ }
+    showThemeLabel();
+  });
+  showThemeLabel();
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-copy]");
     if (!button) { return; }

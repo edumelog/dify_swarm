@@ -77,3 +77,23 @@ def test_list_shows_legacy_folder(logged_client: TestClient, settings: Settings)
     (settings.assets_dir / "office365").mkdir()
     page = logged_client.get("/kb-admin/").text
     assert "office365" in page and "publicado fora da interface" in page
+
+
+
+def _assert_theme_toggle(page: str) -> None:
+    """Confere botão, tema escuro e preferência salva numa página. Entrada: HTML. Saída: nenhuma."""
+    assert 'id="theme-toggle"' in page
+    assert ':root[data-theme="dark"]' in page
+    assert "prefers-color-scheme: dark" in page
+    assert "kb_admin_theme" in page
+
+
+def test_dark_mode_toggle_on_login(client: TestClient) -> None:
+    """O botão de modo escuro aparece na tela de login."""
+    _assert_theme_toggle(client.get("/kb-admin/login").text)
+
+
+def test_dark_mode_toggle_when_logged(logged_client: TestClient) -> None:
+    """O botão de modo escuro aparece nas páginas logadas."""
+    _assert_theme_toggle(logged_client.get("/kb-admin/").text)
+    _assert_theme_toggle(logged_client.get("/kb-admin/docs").text)
