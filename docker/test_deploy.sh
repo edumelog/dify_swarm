@@ -49,7 +49,8 @@ case "$1" in
     else
       echo "${MOCK_LOCK:-0}"
     fi ;;
-  stack) [[ "$2" != "config" ]] || echo "SECRET_KEY_SEEN=${SECRET_KEY:-}" >> "${MOCK_LOG}" ;;
+  build) [[ "${MOCK_BUILD_FAIL:-0}" == "1" ]] && exit 1; echo "sha256:0123456789abcdef0123456789abcdef" ;;
+  stack) [[ "$2" != "config" ]] || { echo "SECRET_KEY_SEEN=${SECRET_KEY:-}"; echo "KB_ADMIN_IMAGE_SEEN=${KB_ADMIN_IMAGE:-}"; } >> "${MOCK_LOG}" ;;
 esac
 EOF
 chmod +x "${WORK_DIR}/bin/docker"
@@ -274,6 +275,9 @@ test_swarm_deploy() {
   check "pergunta se é Swarm" "$(grep -q "Swarm" <<<"${OUT}"; echo $?)"
   check "exporta o .env antes do stack config" "$(grep -q "SECRET_KEY_SEEN=real-secret" "${MOCK_LOG}"; echo $?)"
   check "faz o stack deploy da stack dify" "$(grep -q "docker stack deploy -c docker-stack.yml dify" "${MOCK_LOG}"; echo $?)"
+  check "constrói a imagem do kb_admin" "$(grep -q "docker build -q -t dify-kb-admin:local .*kb_admin" "${MOCK_LOG}"; echo $?)"
+  check "marca a imagem com o ID" "$(grep -q "docker tag dify-kb-admin:local dify-kb-admin:0123456789ab" "${MOCK_LOG}"; echo $?)"
+  check "exporta KB_ADMIN_IMAGE para a stack" "$(grep -q "KB_ADMIN_IMAGE_SEEN=dify-kb-admin:0123456789ab" "${MOCK_LOG}"; echo $?)"
   check "não usa compose" "$(! grep -q "docker compose" "${MOCK_LOG}"; echo $?)"
 }
 
@@ -350,6 +354,8 @@ test_stack_has_no_environment_defaults() {
   check "stack exige DIFY_PUBLIC_HOST" "$(grep -q 'DIFY_PUBLIC_HOST:?' "${stack}"; echo $?)"
   check "stack exige DIFY_PUBLIC_HOST_IP" "$(grep -q 'DIFY_PUBLIC_HOST_IP:?' "${stack}"; echo $?)"
   check "stack sem IP ou domínio de ambiente" "$(! grep -qE '\.dev\.dti|\.hmg\.dti|10\.0\.2\.2|172\.17\.' "${stack}"; echo $?)"
+  check "stack exige KB_ADMIN_IMAGE" "$(grep -q 'KB_ADMIN_IMAGE:?' "${stack}"; echo $?)"
+  check "kb_admin usa o nome completo da api" "$(grep -q 'com.docker.stack.namespace"}}_api:5001' "${stack}"; echo $?)"
 }
 
 # test_ca_default_suggestion: sem DIFY_EXTRA_CA_FILE, Enter aceita localCA.pem e grava o caminho no .env.
@@ -475,6 +481,16 @@ test_stack_postgres_start_period() {
   check "db_postgres com start_period de 5m" "$(awk '/^  db_postgres:/{f=1} f&&/start_period/{print; exit}' "${SCRIPT_DIR}/docker-stack.yml" | grep -q "start_period: 5m"; echo $?)"
 }
 
+# test_kb_admin_build_failure: falha no build do kb_admin interrompe o deploy com mensagem.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_kb_admin_build_failure() {
+  local env="${WORK_DIR}/ok.env"
+  make_env "${env}"
+  MOCK_BUILD_FAIL=1 run_deploy "${env}" "\ns\n" --swarm
+  check "falha se o build do kb_admin falhar" "$([[ ${RC} -ne 0 ]] && grep -q "kb_admin" <<<"${OUT}"; echo $?)"
+  check "não faz deploy sem a imagem" "$(! grep -q "stack deploy" "${MOCK_LOG}"; echo $?)"
+}
+
 # test_compose_deploy: sem Swarm valida e sobe com docker compose.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_compose_deploy() {
@@ -540,6 +556,7 @@ test_waits_for_migration
 test_waits_for_lock_and_replicas
 test_wait_timeout_message
 test_stack_postgres_start_period
+test_kb_admin_build_failure
 test_compose_deploy
 test_mode_question_requires_answer
 test_invalid_argument

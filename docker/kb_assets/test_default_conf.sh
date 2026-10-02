@@ -58,6 +58,7 @@ for _ in $(seq 1 20); do curl -s -o /dev/null "${BASE}/" && break; sleep 0.25; d
 expect_status "imagem existente responde 200" 200 "${BASE}/kb-assets/demo/a.png"
 expect_header "content-type de PNG" '^content-type: image/png' "${BASE}/kb-assets/demo/a.png"
 expect_header "cache de 1 dia" '^cache-control: .*max-age=86400' "${BASE}/kb-assets/demo/a.png"
+expect_header "CSP sandbox (svg sem script)" '^content-security-policy: sandbox' "${BASE}/kb-assets/demo/a.png"
 expect_status "arquivo inexistente responde 404" 404 "${BASE}/kb-assets/demo/zzz.png"
 expect_status "listagem do prefixo bloqueada" 404 "${BASE}/kb-assets/"
 expect_status "listagem do slug bloqueada" 404 "${BASE}/kb-assets/demo/"

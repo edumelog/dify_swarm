@@ -33,6 +33,9 @@ URL_PATTERN='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
 HOSTNAME_PATTERN='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$'
 IPV4_PATTERN='^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'
 SECRET_LENGTH=42
+# Imagem local do kb_admin (interface de publicação das imagens da base de conhecimento).
+KB_ADMIN_DIR="${SCRIPT_DIR}/kb_admin"
+KB_ADMIN_IMAGE_REPO="dify-kb-admin"
 
 REQUIRED_VARS=(
   SECRET_KEY DB_PASSWORD REDIS_PASSWORD PLUGIN_DAEMON_KEY PLUGIN_DIFY_INNER_API_KEY
@@ -442,6 +445,21 @@ wait_until_ready() {
   done
 }
 
+# build_kb_admin_image: constrói a imagem do kb_admin e a marca com uma tag derivada do ID da imagem.
+# A tag muda quando o código muda, o que faz o Swarm atualizar o serviço no deploy.
+# Entrada: nenhuma. Saída: KB_ADMIN_IMAGE exportada (ex.: dify-kb-admin:0123456789ab); encerra com erro se o build falhar.
+build_kb_admin_image() {
+  local image_id
+  echo "Construindo a imagem do kb_admin (${KB_ADMIN_DIR})..." >&2
+  image_id="$(docker build -q -t "${KB_ADMIN_IMAGE_REPO}:local" "${KB_ADMIN_DIR}")" \
+    || fail "não foi possível construir a imagem do kb_admin; rode 'docker build ${KB_ADMIN_DIR}' para ver o erro."
+  image_id="${image_id#sha256:}"
+  KB_ADMIN_IMAGE="${KB_ADMIN_IMAGE_REPO}:${image_id:0:12}"
+  docker tag "${KB_ADMIN_IMAGE_REPO}:local" "${KB_ADMIN_IMAGE}" \
+    || fail "não foi possível marcar a imagem ${KB_ADMIN_IMAGE}."
+  export KB_ADMIN_IMAGE
+}
+
 # deploy_swarm: confere os pré-requisitos do Swarm, valida o manifesto e faz o deploy após confirmação.
 # Entrada: ENV_VALUES carregado. Saída: stack implantada, ou encerra com erro/cancelamento.
 deploy_swarm() {
@@ -451,6 +469,7 @@ deploy_swarm() {
   docker network inspect "${proxy_network}" >/dev/null 2>&1 \
     || fail "a rede externa '${proxy_network}' (DIFY_PROXY_NETWORK) não existe; crie-a com 'docker network create -d overlay --attachable ${proxy_network}'."
   warn_ca_change
+  build_kb_admin_image
 
   export_env
   docker stack config -c "${STACK_FILE}" >/dev/null || fail "o manifesto ${STACK_FILE} é inválido."

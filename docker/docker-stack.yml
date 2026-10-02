@@ -361,11 +361,43 @@ services:
       - net_nginx_pm
     deploy:
       replicas: 1
+      # Volume local compartilhado com o kb_admin: os dois ficam no mesmo nó.
+      placement:
+        constraints:
+          - node.role == manager
       restart_policy:
         condition: any
       update_config:
         parallelism: 1
         order: start-first
+
+  # Interface web de publicação das imagens da base de conhecimento (docker/kb_admin).
+  # A imagem é construída pelo deploy.sh, que exporta KB_ADMIN_IMAGE com uma tag do ID da imagem.
+  kb_admin:
+    image: ${KB_ADMIN_IMAGE:?defina KB_ADMIN_IMAGE rodando o docker/deploy.sh}
+    env_file:
+      - .env
+    environment:
+      KB_ASSETS_DIR: /data/kb-assets
+      KB_ADMIN_DATA_DIR: /data/admin
+      # Nome completo (<stack>_api), como no nginx, para não alcançar a api de outra stack.
+      DIFY_API_URL: 'http://{{index .Service.Labels "com.docker.stack.namespace"}}_api:5001'
+    volumes:
+      - dify_kb_assets:/data/kb-assets
+      - dify_kb_admin_data:/data/admin
+    networks:
+      - default
+      - net_nginx_pm
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      update_config:
+        parallelism: 1
+        order: stop-first
 
 networks:
   default:
@@ -416,3 +448,4 @@ volumes:
   dify_certbot_conf:
   dify_certbot_www:
   dify_kb_assets:
+  dify_kb_admin_data:
