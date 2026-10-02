@@ -118,7 +118,7 @@ check_env() {
     errors+=("WEAVIATE_API_KEY e WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS precisam ter o mesmo valor.")
   fi
   if (( ${#errors[@]} > 0 )); then
-    echo "ERRO: o arquivo ${ENV_FILE} precisa de ajustes (veja a tabela da seção 2 do README.swarm.md):" >&2
+    echo "ERRO: o arquivo ${ENV_FILE} precisa de ajustes (veja a tabela da seção 4 do README.md na raiz do repositório):" >&2
     printf '  - %s\n' "${errors[@]}" >&2
     exit 1
   fi
@@ -201,7 +201,7 @@ fill_secrets() {
     read -r choice || fail "nenhuma opção escolhida; preencha os segredos no ${ENV_FILE} e rode o script de novo."
     choice="${choice,,}"
   done
-  [[ "${choice}" != "c" ]] || fail "preenchimento cancelado; ajuste o ${ENV_FILE} conforme a seção 2 do README.swarm.md."
+  [[ "${choice}" != "c" ]] || fail "preenchimento cancelado; ajuste o ${ENV_FILE} conforme a seção 4 do README.md na raiz do repositório."
   [[ ! " ${pending[*]} " =~ " DB_PASSWORD " ]] || warn_existing_postgres
 
   for var in "${pending[@]}"; do
@@ -289,7 +289,7 @@ fill_public_host() {
     set_update DIFY_PUBLIC_HOST_IP "${value}"
   fi
   timeout 3 bash -c "</dev/tcp/${ENV_VALUES[DIFY_PUBLIC_HOST_IP]}/443" 2>/dev/null \
-    || warn "${ENV_VALUES[DIFY_PUBLIC_HOST_IP]}:443 não aceitou conexão a partir deste host; confira o IP (teste dentro do container na seção 8 do README.swarm.md)."
+    || warn "${ENV_VALUES[DIFY_PUBLIC_HOST_IP]}:443 não aceitou conexão a partir deste host; confira o IP (teste dentro do container na seção 7 do README.md na raiz do repositório)."
 }
 
 # ca_file_problem: descreve por que um arquivo não serve como certificado público de CA.
@@ -524,7 +524,7 @@ main() {
   (( $# <= 1 )) || { usage; exit 1; }
 
   cd "${SCRIPT_DIR}"
-  [[ -f "${ENV_FILE}" ]] || fail "arquivo ${ENV_FILE} não encontrado; crie-o com 'cp .env.example .env' e preencha conforme a seção 2 do README.swarm.md."
+  [[ -f "${ENV_FILE}" ]] || fail "arquivo ${ENV_FILE} não encontrado; crie-o com 'cp .env.example .env' e preencha conforme a seção 4 do README.md na raiz do repositório."
   [[ -f "${ENV_EXAMPLE}" ]] || fail "arquivo ${ENV_EXAMPLE} não encontrado; ele é usado para detectar segredos públicos."
   load_env_file "${ENV_FILE}" ENV_VALUES
   load_env_file "${ENV_EXAMPLE}" EXAMPLE_VALUES

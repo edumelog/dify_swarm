@@ -128,7 +128,7 @@ services:
         mode: 0444
     # O domínio público (ex.: *.dti) só existe no hosts de quem navega; o SSR do
     # Next.js dentro do container precisa desta entrada para chamar CONSOLE_API_URL.
-    # Os dois valores vêm do .env de cada ambiente (veja a seção 8 do README.swarm.md).
+    # Os dois valores vêm do .env de cada ambiente (veja a seção 7 do README.md na raiz do repositório).
     extra_hosts:
       - "${DIFY_PUBLIC_HOST:?defina DIFY_PUBLIC_HOST no .env (domínio público do Dify)}:${DIFY_PUBLIC_HOST_IP:?defina DIFY_PUBLIC_HOST_IP no .env (IP que alcança o NGPM na 443)}"
     networks:
