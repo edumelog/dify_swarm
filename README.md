@@ -20,11 +20,12 @@ o que é próprio do projeto; a documentação original do Dify está no
 6. [Nginx Proxy Manager (NGPM)](#6-nginx-proxy-manager-ngpm)
 7. [SSR do `web`: domínio público e CA interna](#7-ssr-do-web-domínio-público-e-ca-interna)
 8. [Base de conhecimento do chatbot](#8-base-de-conhecimento-do-chatbot)
-9. [Operação do dia a dia](#9-operação-do-dia-a-dia)
-10. [Solução de problemas](#10-solução-de-problemas)
-11. [Testes](#11-testes)
-12. [Estrutura do repositório](#12-estrutura-do-repositório)
-13. [Sobre o Dify](#13-sobre-o-dify)
+9. [Modelo local no host (relay)](#9-modelo-local-no-host-relay)
+10. [Operação do dia a dia](#10-operação-do-dia-a-dia)
+11. [Solução de problemas](#11-solução-de-problemas)
+12. [Testes](#12-testes)
+13. [Estrutura do repositório](#13-estrutura-do-repositório)
+14. [Sobre o Dify](#14-sobre-o-dify)
 
 ## 1. Funcionalidades
 
@@ -48,6 +49,8 @@ o que é próprio do projeto; a documentação original do Dify está no
     PDF → Markdown, manuais de uso etc.);
   - perfis: owner e admin alteram; editor só consulta;
   - modo claro e escuro.
+- **Relay para modelo local** (`llm-relay.sh`): deixa o Dify usar um modelo que roda no próprio
+  host (ex.: llama.cpp no Windows), em Swarm ou Compose.
 - **Prompt de conversão `PDF_TO_RAG.md`**: instruções para uma LLM externa transformar um PDF
   no pacote `.zip` aceito pelo `kb_admin`.
 
@@ -534,7 +537,66 @@ diretório, envia `Cache-Control` de 1 dia, `X-Content-Type-Options: nosniff` e
 `Content-Security-Policy: sandbox` (scripts dentro de SVG não rodam nem quando a imagem é aberta
 direto no navegador).
 
-## 9. Operação do dia a dia
+## 9. Modelo local no host (relay)
+
+Para usar no Dify um modelo que roda **no próprio host** (por exemplo, o Bonsai, um llama.cpp
+com API compatível com a OpenAI rodando no Windows em `127.0.0.1:8080`), é preciso um relay. Dentro
+de um container, `127.0.0.1` é o próprio container, e o modelo só escuta no loopback do host. O
+`docker/llm-relay.sh` mantém um container `socat` na rede do host que escuta num IP alcançável pelos
+containers do Dify e repassa para o modelo.
+
+```text
+Dify (plugin_daemon) ──> http://<gateway>:18080/v1 ──> relay (socat, rede do host) ──> 127.0.0.1:8080 (modelo)
+```
+
+O relay é **sob demanda** (dev): o container não reinicia sozinho e só sobe quando você manda.
+
+```bash
+docker/llm-relay.sh up       # cria ou inicia o relay e mostra a URL para o Dify
+docker/llm-relay.sh status   # estado do relay, URL para o Dify e se o modelo responde
+docker/llm-relay.sh down     # para o relay (o container fica para o próximo 'up')
+```
+
+- Funciona com **Swarm ou Compose**: por padrão o relay escuta no gateway da rede `bridge` do Docker
+  (normalmente `172.17.0.1`), que existe com ou sem Swarm e é alcançado tanto pelas redes da stack
+  quanto pelas do Compose.
+- O `up` avisa se o modelo não responde no host. Se encontrar um container com outra configuração
+  (por exemplo, o relay antigo em `172.18.0.1`), ele o recria com a atual e mostra a URL nova; o
+  `status` mostra a URL que vale enquanto isso.
+- A porta é **18080**, não 8080: no WSL em modo `networkingMode=mirrored`, as portas são
+  compartilhadas com o Windows, onde o modelo já ocupa a 8080 ("Address in use").
+- Variáveis: `LLM_RELAY_PORT` (padrão `18080`), `LLM_RELAY_BIND_IP` (padrão: gateway da rede
+  `bridge`), `LLM_RELAY_TARGET` (padrão `127.0.0.1:8080`), `LLM_RELAY_NAME` (padrão `bonsai-relay`),
+  `LLM_RELAY_IMAGE` (padrão `alpine/socat`).
+
+### Cadastro no Dify
+
+Em **Settings → Model Provider → OpenAI-API-compatible → Add model**:
+
+| Campo | Valor |
+|---|---|
+| Model Name / Model display name | um nome livre (ex.: `Bonsai 2`) |
+| Model Type | `LLM` |
+| API Key | vazio (o llama-server não exige chave) |
+| API Base URL | a URL que o `llm-relay.sh up` mostra (ex.: `http://172.17.0.1:18080/v1`) |
+| model name for API endpoint | um nome livre (ex.: `bonsai-2`; o llama-server serve um modelo só) |
+| Completion mode | `Chat` |
+| Model context size | o `-c` com que o modelo foi iniciado (ex.: `65536`) |
+| Upper bound for max tokens | ex.: `4096` |
+
+O Dify testa a conexão ao salvar: suba o modelo no host e o relay **antes** de clicar em **Add**.
+Nunca use `http://127.0.0.1:8080` nesse campo.
+
+### Se o Dify não conectar
+
+1. `docker/llm-relay.sh status`: o modelo responde? O relay está no ar? A URL no Dify é a mostrada?
+2. Teste de dentro de um container do Dify:
+   `docker exec $(docker ps -q -f name=dify_plugin_daemon | head -1) curl -s -m 5 http://<ip>:18080/v1/models`
+   (no Compose, troque o filtro pelo nome do container do `plugin_daemon`).
+3. Se o IP do gateway for outro na sua máquina, use o que o script mostrar ou fixe
+   `LLM_RELAY_BIND_IP`.
+
+## 10. Operação do dia a dia
 
 - **Aplicar mudanças** no `.env`, no `docker-stack.yml` ou no código do `kb_admin`:
   `./deploy.sh --swarm` (ou `./deploy.sh --compose` no modo Compose).
@@ -553,7 +615,7 @@ direto no navegador).
 - `depends_on` não existe no Swarm: é normal `api`, `worker` e `plugin_daemon` reiniciarem algumas
   vezes até Postgres e Redis ficarem prontos.
 
-## 10. Solução de problemas
+## 11. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
@@ -564,7 +626,7 @@ direto no navegador).
 | 502 no Dify com `connect() failed (111)` no log do `nginx` | colisão de nomes curtos com outra stack em `net_nginx_pm` | A stack já usa nomes completos (`<stack>_api` etc.); confira se o template do Swarm está em uso |
 | Login no `kb_admin`: "Não foi possível falar com o Dify" | API fora do ar ou incompatível | `docker service logs dify_kb_admin` mostra a chamada que falhou |
 | `kb_admin`: "Seu papel no Dify (editor) permite só consulta." | perfil editor | Peça a um owner ou admin |
-| Deploy falha com `only updates to Labels are allowed` | config do Swarm alterado | Remover a stack e fazer o deploy de novo (seção 9) |
+| Deploy falha com `only updates to Labels are allowed` | config do Swarm alterado | Remover a stack e fazer o deploy de novo (seção 10) |
 
 Sobre a colisão de nomes: no Swarm, o nome curto de um serviço (ex.: `api`) vira alias DNS em
 toda rede a que ele pertence. Por isso a stack usa `nginx/swarm/default.conf.template`, com
@@ -578,12 +640,13 @@ docker service inspect <stack>_api --format '{{json .Endpoint.VirtualIPs}}'
 docker network inspect net_nginx_pm --verbose --format '{{range $k,$v := .Services}}{{$k}} VIP={{$v.VIP}}{{println}}{{end}}'
 ```
 
-## 11. Testes
+## 12. Testes
 
 ```bash
 docker/test_deploy.sh                  # deploy.sh, com docker simulado
 docker/test_remove.sh                  # remove.sh (Swarm e Compose), com docker simulado
 docker/test_compose_kb.sh              # docker-compose.kb.yaml: compose válido, template do nginx e nginx -t
+docker/test_llm_relay.sh               # llm-relay.sh, com docker e curl simulados
 docker/kb_assets/test_default_conf.sh  # nginx do kb_assets (container nginx:alpine temporário)
 docker/kb_assets/test_publish.sh       # publish.sh
 docker/kb_admin/run_tests.sh           # kb_admin (pytest em container Python 3.12)
@@ -591,7 +654,7 @@ docker/kb_admin/run_tests.sh           # kb_admin (pytest em container Python 3.
 
 Os testes não dependem de nada em `kb/`.
 
-## 12. Estrutura do repositório
+## 13. Estrutura do repositório
 
 | Caminho | Conteúdo |
 |---|---|
@@ -599,6 +662,7 @@ Os testes não dependem de nada em `kb/`.
 | `docker/docker-compose.kb.yaml` | `kb_assets` e `kb_admin` para o modo Docker Compose |
 | `docker/nginx/compose/` | Template do nginx do Dify com as rotas do kb (modo Compose) |
 | `docker/deploy.sh`, `docker/remove.sh` | Deploy e remoção (e os testes `test_*.sh`) |
+| `docker/llm-relay.sh` | Relay para um modelo local no host (seção 9) |
 | `docker/.env.example` | Modelo do `.env` |
 | `docker/nginx/swarm/` | Template do nginx do Dify com nomes completos de serviço |
 | `docker/certs/` | Certificados públicos de CA (só `localCA.pem` e `no-extra-ca.pem` versionados) |
@@ -614,7 +678,7 @@ imagem `langgenius/dify-api` em execução. Antes de depender de uma rota ou com
 `docker exec $(docker ps -q -f name=dify_api) cat /app/api/<caminho>`. As constantes copiadas do
 Dify ficam em `docker/kb_admin/kb_admin/ingest_params.py`.
 
-## 13. Sobre o Dify
+## 14. Sobre o Dify
 
 O Dify é uma plataforma open source para criar aplicações com LLMs, mantida pela LangGenius. A
 documentação, a apresentação e o guia de deploy oficial (Docker Compose) estão no
