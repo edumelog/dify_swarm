@@ -152,3 +152,53 @@ def test_save_upload_limit(tmp_path: Path) -> None:
     with pytest.raises(PackageError) as error:
         save_upload(io.BytesIO(b"123456"), target, max_bytes=5)
     assert error.value.problems == ["o .zip passa de 50 MB"]
+
+
+def _patch_headers(data: bytes, local_offset: int, central_offset: int, value: int) -> bytes:
+    """Grava um campo de 2 bytes nos cabeçalhos locais e no diretório central. Entrada: zip, posições e valor. Saída: zip alterado."""
+    raw = bytearray(data)
+    for signature, offset in ((b"PK\x03\x04", local_offset), (b"PK\x01\x02", central_offset)):
+        start = 0
+        while (index := raw.find(signature, start)) != -1:
+            raw[index + offset:index + offset + 2] = value.to_bytes(2, "little")
+            start = index + 4
+    return bytes(raw)
+
+
+def _read_bytes(tmp_path: Path, data: bytes) -> list[str]:
+    """Lê um zip dado em bytes que deve falhar. Entrada: pasta e bytes. Saída: problemas do PackageError."""
+    zip_path = tmp_path / "upload.zip"
+    zip_path.write_bytes(data)
+    with pytest.raises(PackageError) as error:
+        read_package(zip_path, "manual-teste.zip", tmp_path / "staging")
+    return error.value.problems
+
+
+def test_corrupted_deflate_data(tmp_path: Path) -> None:
+    """Dados comprimidos corrompidos dão a mensagem de zip inválido, não erro 500."""
+    import zipfile
+
+    with zipfile.ZipFile(tmp_path / "ok.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manual-teste/manual-teste.md", MANUAL_MD * 50)
+        archive.writestr("manual-teste/images/tela.png", PNG)
+    raw = bytearray((tmp_path / "ok.zip").read_bytes())
+    data_start = 30 + len("manual-teste/manual-teste.md")
+    raw[data_start + 2:data_start + 60] = bytes([0xFF] * 58)
+    assert _read_bytes(tmp_path, bytes(raw)) == ["o arquivo enviado não é um .zip válido"]
+
+
+def test_password_protected_zip(tmp_path: Path) -> None:
+    """Zip protegido por senha tem mensagem própria."""
+    from tests.helpers import zip_bytes
+
+    problems = _read_bytes(tmp_path, _patch_headers(zip_bytes(manual_files()), 6, 8, 0x1))
+    assert problems == ["zip protegido por senha não é suportado; gere o .zip sem senha"]
+
+
+def test_unsupported_compression_method(tmp_path: Path) -> None:
+    """Método de compressão desconhecido dá a mensagem de zip inválido."""
+    from tests.helpers import zip_bytes
+
+    assert _read_bytes(tmp_path, _patch_headers(zip_bytes(manual_files()), 8, 10, 99)) == [
+        "o arquivo enviado não é um .zip válido"
+    ]

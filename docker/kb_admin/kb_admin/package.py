@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import stat
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -24,6 +25,8 @@ IGNORED_PREFIXES = ("__MACOSX/",)
 IGNORED_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 TOO_BIG = "o conteúdo descompactado passa de 200 MB"
+INVALID_ZIP = "o arquivo enviado não é um .zip válido"
+ENCRYPTED_FLAG = 0x1
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,8 @@ def _safe_entries(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
         raise PackageError([TOO_BIG])
     problems: list[str] = []
     entries: dict[str, zipfile.ZipInfo] = {}
+    if any(info.flag_bits & ENCRYPTED_FLAG for info in infos):
+        raise PackageError(["zip protegido por senha não é suportado; gere o .zip sem senha"])
     for info in infos:
         name = info.filename
         if _is_ignored(name):
@@ -196,6 +201,6 @@ def read_package(zip_path: Path, filename: str, staging_dir: Path) -> ManualPack
             images_dir = staging_dir / IMAGES_DIR
             images_dir.mkdir(parents=True, exist_ok=True)
             _extract_images(archive, entries, images, images_dir)
-    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError) as exc:
-        raise PackageError(["o arquivo enviado não é um .zip válido"]) from exc
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, EOFError, zlib.error, NotImplementedError) as exc:
+        raise PackageError([INVALID_ZIP]) from exc
     return ManualPackage(slug, markdown, images_dir, images, tuple(_warnings(entries, slug, images)))
