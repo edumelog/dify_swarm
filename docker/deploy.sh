@@ -36,6 +36,7 @@ SECRET_LENGTH=42
 # Imagem local do kb_admin (interface de publicação das imagens da base de conhecimento).
 KB_ADMIN_DIR="${SCRIPT_DIR}/kb_admin"
 KB_ADMIN_IMAGE_REPO="dify-kb-admin"
+KB_ASSETS_CONF_FILE="${SCRIPT_DIR}/kb_assets/default.conf"
 
 REQUIRED_VARS=(
   SECRET_KEY DB_PASSWORD REDIS_PASSWORD PLUGIN_DAEMON_KEY PLUGIN_DIFY_INNER_API_KEY
@@ -462,6 +463,14 @@ build_kb_admin_image() {
   export KB_ADMIN_IMAGE
 }
 
+# export_kb_assets_conf_hash: exporta o hash do default.conf do kb_assets, usado no nome do config.
+# Configs do Swarm são imutáveis; com o hash no nome, mudar o arquivo cria um config novo.
+# Entrada: nenhuma. Saída: KB_ASSETS_CONF_HASH exportada (12 caracteres hexadecimais).
+export_kb_assets_conf_hash() {
+  KB_ASSETS_CONF_HASH="$(sha256sum "${KB_ASSETS_CONF_FILE}" | cut -c1-12)"
+  export KB_ASSETS_CONF_HASH
+}
+
 # deploy_swarm: confere os pré-requisitos do Swarm, valida o manifesto e faz o deploy após confirmação.
 # Entrada: ENV_VALUES carregado. Saída: stack implantada, ou encerra com erro/cancelamento.
 deploy_swarm() {
@@ -472,6 +481,7 @@ deploy_swarm() {
     || fail "a rede externa '${proxy_network}' (DIFY_PROXY_NETWORK) não existe; crie-a com 'docker network create -d overlay --attachable ${proxy_network}'."
   warn_ca_change
   build_kb_admin_image
+  export_kb_assets_conf_hash
 
   export_env
   docker stack config -c "${STACK_FILE}" >/dev/null || fail "o manifesto ${STACK_FILE} é inválido."

@@ -50,7 +50,7 @@ case "$1" in
       echo "${MOCK_LOCK:-0}"
     fi ;;
   build) [[ "${MOCK_BUILD_FAIL:-0}" == "1" ]] && exit 1; echo "sha256:0123456789abcdef0123456789abcdef" ;;
-  stack) [[ "$2" != "config" ]] || { echo "SECRET_KEY_SEEN=${SECRET_KEY:-}"; echo "KB_ADMIN_IMAGE_SEEN=${KB_ADMIN_IMAGE:-}"; } >> "${MOCK_LOG}" ;;
+  stack) [[ "$2" != "config" ]] || { echo "SECRET_KEY_SEEN=${SECRET_KEY:-}"; echo "KB_ADMIN_IMAGE_SEEN=${KB_ADMIN_IMAGE:-}"; echo "KB_ASSETS_CONF_HASH_SEEN=${KB_ASSETS_CONF_HASH:-}"; } >> "${MOCK_LOG}" ;;
 esac
 EOF
 chmod +x "${WORK_DIR}/bin/docker"
@@ -278,6 +278,9 @@ test_swarm_deploy() {
   check "constrói a imagem do kb_admin" "$(grep -q "docker build -q -t dify-kb-admin:local .*kb_admin" "${MOCK_LOG}"; echo $?)"
   check "marca a imagem com o ID" "$(grep -q "docker tag dify-kb-admin:local dify-kb-admin:0123456789ab" "${MOCK_LOG}"; echo $?)"
   check "exporta KB_ADMIN_IMAGE para a stack" "$(grep -q "KB_ADMIN_IMAGE_SEEN=dify-kb-admin:0123456789ab" "${MOCK_LOG}"; echo $?)"
+  local conf_hash
+  conf_hash="$(sha256sum "${SCRIPT_DIR}/kb_assets/default.conf" | cut -c1-12)"
+  check "exporta o hash do default.conf do kb_assets" "$(grep -q "KB_ASSETS_CONF_HASH_SEEN=${conf_hash}" "${MOCK_LOG}"; echo $?)"
   check "não usa compose" "$(! grep -q "docker compose" "${MOCK_LOG}"; echo $?)"
 }
 
@@ -355,6 +358,7 @@ test_stack_has_no_environment_defaults() {
   check "stack exige DIFY_PUBLIC_HOST_IP" "$(grep -q 'DIFY_PUBLIC_HOST_IP:?' "${stack}"; echo $?)"
   check "stack sem IP ou domínio de ambiente" "$(! grep -qE '\.dev\.dti|\.hmg\.dti|10\.0\.2\.2|172\.17\.' "${stack}"; echo $?)"
   check "stack exige KB_ADMIN_IMAGE" "$(grep -q 'KB_ADMIN_IMAGE:?' "${stack}"; echo $?)"
+  check "config do kb_assets versionada pelo hash" "$(grep -q 'name: dify_kb_assets_conf_${KB_ASSETS_CONF_HASH:?' "${stack}"; echo $?)"
   check "kb_admin usa o nome completo da api" "$(grep -q 'com.docker.stack.namespace"}}_api:5001' "${stack}"; echo $?)"
 }
 

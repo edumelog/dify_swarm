@@ -429,7 +429,10 @@ configs:
     file: ./nginx/https.conf.template
   dify_nginx_entrypoint:
     file: ./nginx/docker-entrypoint.sh
+  # Nome com o hash do arquivo (exportado pelo deploy.sh): configs do Swarm são imutáveis,
+  # então cada versão do default.conf vira um config novo e o serviço é atualizado.
   dify_kb_assets_conf:
+    name: dify_kb_assets_conf_${KB_ASSETS_CONF_HASH:?defina KB_ASSETS_CONF_HASH rodando o docker/deploy.sh}
     file: ./kb_assets/default.conf
   # Template específico do Swarm (upstreams pelos nomes completos <stack>_api/_web/_plugin_daemon).
   dify_nginx_swarm_default_conf_template:
