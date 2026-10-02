@@ -139,3 +139,50 @@ def test_cleanup_removes_leftovers(docs: DocumentStore, tmp_path: Path) -> None:
     (tmp_path / "docs/.0123456789abcdef.old-abc").mkdir()
     docs.cleanup_temporary()
     assert sorted(p.name for p in (tmp_path / "docs").iterdir() if p.is_dir()) == []
+
+
+def test_seed_recovers_from_crash_before_marker(docs: DocumentStore, tmp_path: Path) -> None:
+    """Se o processo morreu depois de criar o prompt e antes do marcador, a subida seguinte não quebra."""
+    seed = tmp_path / "PDF_TO_RAG.md"
+    seed.write_text("# Prompt\n", encoding="utf-8")
+    add(docs, "PDF_TO_RAG.md")
+    assert docs.seed(seed, "d", "a") is False
+    assert (tmp_path / "docs/.seeded").exists()
+    assert len(docs.list_documents()) == 1
+
+
+def test_cleanup_failure_after_swap_is_not_an_error(docs: DocumentStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Se apagar a pasta antiga falhar depois da troca, substituir e apagar continuam dando certo."""
+    import shutil
+
+    real_rmtree = shutil.rmtree
+
+    def failing_rmtree(path: object, ignore_errors: bool = False) -> None:
+        """Simula falha de I/O ao apagar a pasta antiga. Entrada: caminho e flag. Saída: nenhuma."""
+        if ".old-" in str(path) and not ignore_errors:
+            raise OSError("disco ocupado")
+        real_rmtree(path, ignore_errors=ignore_errors)
+
+    doc_id = add(docs)
+    monkeypatch.setattr("kb_admin.docs_store.shutil.rmtree", failing_rmtree)
+    assert docs.replace(doc_id, io.BytesIO(b"novo"), "prompt.md", "ana@camara.rj").size == 4
+    docs.delete(doc_id)
+    assert docs.list_documents() == []
+
+
+def test_replace_restores_original_if_swap_fails(docs: DocumentStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Se a pasta nova não puder entrar no lugar, o documento original volta."""
+    doc_id = add(docs, "prompt.md", b"original")
+    real_rename = Path.rename
+
+    def failing_rename(self: Path, target: Path) -> Path:
+        """Falha só ao mover a pasta nova para o lugar. Entrada: origem e destino. Saída: destino."""
+        if self.name.startswith(".new.tmp-"):
+            raise OSError("falha simulada")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+    with pytest.raises(OSError):
+        docs.replace(doc_id, io.BytesIO(b"novo"), "prompt.md", "ana@camara.rj")
+    monkeypatch.setattr(Path, "rename", real_rename)
+    assert docs.file_path(doc_id).read_bytes() == b"original"

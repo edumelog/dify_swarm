@@ -207,8 +207,13 @@ class DocumentStore:
                 target = self._folder(doc_id)
                 old = self._dir / f".{doc_id}.old-{secrets.token_hex(6)}"
                 target.rename(old)
-                staging.rename(target)
-                shutil.rmtree(old)
+                try:
+                    staging.rename(target)
+                except BaseException:
+                    old.rename(target)
+                    raise
+                # A troca já valeu; se a pasta antiga não sair agora, a limpeza da próxima subida a remove.
+                shutil.rmtree(old, ignore_errors=True)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -229,14 +234,19 @@ class DocumentStore:
             self.get(doc_id)
             old = self._dir / f".{doc_id}.old-{secrets.token_hex(6)}"
             self._folder(doc_id).rename(old)
-            shutil.rmtree(old)
+            shutil.rmtree(old, ignore_errors=True)
 
     def seed(self, seed_file: Path, description: str, author: str) -> bool:
         """Cria o conteúdo inicial uma única vez. Entrada: arquivo, descrição e autor. Saída: True se criou agora."""
         marker = self._dir / SEED_MARKER
         if marker.exists() or not seed_file.is_file():
             return False
+        created = True
         with seed_file.open("rb") as source:
-            self.create(source, seed_file.name, description, author)
+            try:
+                self.create(source, seed_file.name, description, author)
+            except DocumentError:
+                # Já existe (subida anterior interrompida antes do marcador): só falta marcar.
+                created = False
         marker.write_text("ok\n", encoding="utf-8")
-        return True
+        return created
