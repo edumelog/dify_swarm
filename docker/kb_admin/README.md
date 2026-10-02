@@ -5,10 +5,16 @@ como base de conhecimento do chatbot e preparar o `.md` para o ingest no Dify.
 
 ## Funcionalidades
 
-- Login com o mesmo e-mail e senha do Dify (somente papéis owner, admin e editor).
+- Login com o mesmo e-mail e senha do Dify (papéis owner, admin e editor). O editor só
+  consulta: vê, baixa e confere parâmetros, mas não envia, substitui nem apaga.
 - Envio do `.zip` de um manual (`<nome>.zip` com a pasta `<nome>/`, o `<nome>.md` e
-  `images/`), validado com as mesmas regras do `publish.sh` e do prompt
-  `docker/kb_assets/docs/PDF_TO_RAG.md`.
+  `images/`), validado com as mesmas regras do `publish.sh` e do prompt de conversão
+  `PDF_TO_RAG.md`.
+- Aba **Documentos de apoio**: biblioteca de arquivos com descrição (prompts de
+  conversão, manuais de uso etc.), com envio, download, substituição, edição da
+  descrição e exclusão (só owner e admin). Na primeira subida, o app inclui o prompt
+  `PDF_TO_RAG.md` a partir de `docker/kb_admin/seed/`; se ele for apagado, só volta
+  com um volume `dify_kb_admin_data` novo.
 - Publicação das imagens em `<URL do Dify>/kb-assets/<nome>/`, servidas pelo
   `dify_kb_assets`.
 - Download do `<nome>.md` com as URLs absolutas do ambiente (DEV, HMG ou PROD), pronto

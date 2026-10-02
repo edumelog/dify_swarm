@@ -21,7 +21,7 @@ publicados.
 - Apagar ou atualizar documentos/bases no Dify: o app só avisa que isso deve
   ser feito no Dify.
 - Conversão de PDF para `.md` (continua fora do projeto, ver
-  `docker/kb_assets/docs/PDF_TO_RAG.md`).
+  `PDF_TO_RAG.md`, hoje na aba Documentos de apoio do kb_admin; arquivo inicial em `docker/kb_admin/seed/`).
 
 ## Arquitetura
 
@@ -225,7 +225,7 @@ Chunk filho (calculado):
 ### Alinhamento com o prompt de conversão
 
 As regras que o `.md` precisa seguir estão em
-`docker/kb_assets/docs/PDF_TO_RAG.md`, seção "Regras exigidas pela ingestão no
+`PDF_TO_RAG.md`, hoje na aba Documentos de apoio do kb_admin; arquivo inicial em `docker/kb_admin/seed/`, seção "Regras exigidas pela ingestão no
 Dify": títulos com `#` e espaço, seções de até 3.000 caracteres, linhas de até
 1.000, tabelas com linhas autocontidas, nada entre `<` e `>` e nome do pacote
 igual ao do `.md` e do `.zip`. Os avisos do app usam os mesmos números e citam

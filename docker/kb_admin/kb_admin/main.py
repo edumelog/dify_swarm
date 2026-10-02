@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 
 from kb_admin.auth import DifyAuthClient
 from kb_admin.config import load_settings
-from kb_admin.docs_store import DocumentStore
+from kb_admin.docs_store import SEED_AUTHOR, SEED_DESCRIPTION, DocumentStore
 from kb_admin.storage import ManualStore
 from kb_admin.web import create_app
+
+
+SEED_FILE = Path(__file__).resolve().parent.parent / "seed" / "PDF_TO_RAG.md"
 
 
 def build_app() -> FastAPI:
@@ -23,4 +27,5 @@ def build_app() -> FastAPI:
     docs = DocumentStore(settings.data_dir / "docs")
     docs.ensure_dirs()
     docs.cleanup_temporary()
+    docs.seed(SEED_FILE, SEED_DESCRIPTION, SEED_AUTHOR)
     return create_app(settings, store, docs, DifyAuthClient(settings.dify_api_url))

@@ -40,8 +40,9 @@ Cada manual é uma pasta `kb/<manual>/` com:
 
 A conversão de PDF para `.md` é feita fora deste projeto: o `.md` e as imagens
 já chegam prontos. Para gerar esse pacote a partir de um PDF com um LLM, use o
-prompt em [`docs/PDF_TO_RAG.md`](docs/PDF_TO_RAG.md), que já produz o formato
-aceito pelo `publish.sh`.
+prompt `PDF_TO_RAG.md`, disponível para download na aba **Documentos de apoio** do
+`kb_admin` (o arquivo inicial fica em `docker/kb_admin/seed/`). Ele já produz o formato
+aceito pelo `kb_admin` e pelo `publish.sh`.
 
 As imagens só podem ser escritas como `![descrição](images/arquivo.png)` (ou
 `./images/arquivo.png`). Os nomes de arquivo só podem ter letras sem acento,

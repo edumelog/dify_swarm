@@ -14,5 +14,7 @@ RUN pip install --no-cache-dir -r requirements-dev.txt
 
 FROM base AS runtime
 COPY kb_admin ./kb_admin
+# Conteúdo inicial da aba Documentos de apoio (prompt de conversão PDF → Markdown).
+COPY seed ./seed
 EXPOSE 8000
 CMD ["uvicorn", "kb_admin.main:build_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

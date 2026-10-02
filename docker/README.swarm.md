@@ -318,7 +318,7 @@ O serviço `dify_kb_assets` (nginx) serve as imagens dos manuais da base de conh
 
 Ordem de uso:
 
-1. Gere o pacote do manual (`<nome>.zip` com a pasta `<nome>/`, o `<nome>.md` e `images/`) a partir do PDF com o prompt [`kb_assets/docs/PDF_TO_RAG.md`](kb_assets/docs/PDF_TO_RAG.md).
+1. Gere o pacote do manual (`<nome>.zip` com a pasta `<nome>/`, o `<nome>.md` e `images/`) a partir do PDF com o prompt `PDF_TO_RAG.md`, que se baixa na aba **Documentos de apoio** do `kb_admin` (arquivo inicial em [`kb_admin/seed/PDF_TO_RAG.md`](kb_admin/seed/PDF_TO_RAG.md)).
 2. Faça o deploy da stack (seção 5), que já inclui os serviços `dify_kb_assets` e `dify_kb_admin`.
 3. No NGPM, crie no proxy host do Dify as custom locations `/kb-assets/` → `dify_kb_assets:80` e `/kb-admin/` → `dify_kb_admin:8000`.
 4. Abra `<protocolo>://<domínio-do-dify>/kb-admin/`, entre com o usuário do Dify (owner, admin ou editor) e envie o zip.

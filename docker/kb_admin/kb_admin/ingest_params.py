@@ -22,7 +22,7 @@ DIFY_DEFAULT_CLEANING = (
 DIFY_EXTRA_NEWLINES = re.compile(r"\n{3,}")
 DIFY_EXTRA_SPACES = re.compile(r"[\t\f\r\x20  ᠎ -   　]{2,}")
 
-# --- Regras da recomendação (alinhadas ao docker/kb_assets/docs/PDF_TO_RAG.md) ---
+# --- Regras da recomendação (alinhadas ao prompt docker/kb_admin/seed/PDF_TO_RAG.md) ---
 PARENT_DELIMITER = "\n\n\n"
 PARAGRAPH_DELIMITER = "\n\n"
 LINE_DELIMITER = "\n"
