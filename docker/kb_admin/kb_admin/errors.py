@@ -42,3 +42,11 @@ class PackageError(KbAdminError):
         """Guarda os problemas. Entrada: lista de mensagens. Saída: nenhuma."""
         super().__init__("O pacote tem problemas e nada foi publicado.")
         self.problems = problems
+
+
+class DocumentError(KbAdminError):
+    """Documento de apoio recusado (nome, descrição ou tamanho)."""
+
+
+class DocumentNotFoundError(NotFoundError):
+    """Documento de apoio inexistente (ou id inválido)."""
