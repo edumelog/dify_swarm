@@ -248,72 +248,79 @@ versionados do Dify.
 
 ## 6. Nginx Proxy Manager (NGPM)
 
-### Proxy host do Dify
+Faça o deploy da stack **antes** de configurar o NGPM. A configuração abaixo é a recomendada: ela
+**não trava o NGPM** se a stack estiver fora do ar e **não precisa de reload** depois de recriar a
+stack.
 
-Faça o deploy da stack **antes** de configurar o NGPM. Crie um Proxy Host:
+### Passo a passo
 
-- Domínio: o de `CONSOLE_WEB_URL` (ex.: `dify.dev.dti`)
-- Scheme `http`, Forward Hostname `dify_nginx`, Forward Port `80`
-- **Cache Assets: desligado** (veja abaixo)
-
-Use `dify_nginx` (nome completo do serviço), e não `dify_web`: o `web` não está na rede do NGPM e as
-rotas `/console/api`, `/api` e `/files` não chegariam à API.
-
-Na aba **Custom locations** do mesmo proxy host:
-
-| Location | Scheme | Forward Hostname | Forward Port |
-|---|---|---|---|
-| `/kb-assets/` | `http` | `dify_kb_assets` | `80` |
-| `/kb-admin/` | `http` | `dify_kb_admin` | `8000` |
-
-**Por que o Cache Assets fica desligado:** quando ligado, o NGPM cria uma regra por extensão
-(`location ~* ^.*\.(css|js|jpe?g|gif|png|...)$`) que tem prioridade sobre a custom location e
-desvia as imagens para o Dify, que responde 404. Se for preciso mantê-lo ligado, troque a custom
-location `/kb-assets/` por esta configuração na aba **Advanced**:
+1. **Proxy Hosts → Add Proxy Host**, aba **Details**:
+   - Domain Names: o domínio de `CONSOLE_WEB_URL` (ex.: `dify.dev.dti`)
+   - Scheme: `http` · Forward Hostname: `dify_nginx` · Forward Port: `80`
+   - **Cache Assets: desligado**
+2. Aba **SSL**: o certificado do domínio, como nos outros hosts do NGPM.
+3. Aba **Custom locations**: **não crie** `/kb-assets/` nem `/kb-admin/` aqui. Se já existirem,
+   apague as duas (ícone de lixeira).
+4. Aba **Advanced** (engrenagem): cole o trecho abaixo **exatamente como está** e salve.
 
 ```nginx
+# Imagens dos manuais (kb_assets) e interface de publicação (kb_admin).
+# O destino fica numa variável: o NGPM resolve o nome a cada requisição. Se a stack estiver fora
+# do ar, só estas rotas respondem 502; o proxy host e os outros domínios continuam funcionando.
 location ^~ /kb-assets/ {
-  proxy_pass http://dify_kb_assets:80;
-}
-```
-
-### Como não travar o NGPM quando a stack está fora do ar
-
-O nginx do NGPM resolve na inicialização os nomes usados nas custom locations. Se um deles não
-existir (por exemplo, a stack `dify` removida ou ainda subindo), acontece uma de duas coisas:
-
-- o NGPM desativa o proxy host inteiro e o Dify sai do ar (reabrir o proxy host e salvar de novo
-  resolve, depois que a stack estiver no ar);
-- ou o nginx entra em loop com `[emerg] host not found in upstream` e **todos** os domínios caem,
-  inclusive o painel na porta 81.
-
-O destino principal do proxy host não tem esse problema, porque o NGPM já o gera em variável
-(`set $server ...`). Para recuperar sem o painel, desative o arquivo do host problemático dentro do
-container e depois corrija o host no painel:
-
-```bash
-docker logs --tail 20 $(docker ps -q -f name=ngpm_ngpm) | grep emerg   # mostra o N.conf culpado
-docker exec $(docker ps -q -f name=ngpm_ngpm) mv /data/nginx/proxy_host/N.conf /data/nginx/proxy_host/N.conf.err
-```
-
-Para evitar o problema de vez, escreva as locations na aba **Advanced** com o destino em variável,
-que só é resolvida a cada requisição:
-
-```nginx
-location /kb-admin/ {
-    set $upstream http://dify_kb_admin:8000;
-    proxy_pass $upstream;
+    set $kb_assets_upstream http://dify_kb_assets:80;
+    proxy_pass $kb_assets_upstream;
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Scheme $scheme;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+location ^~ /kb-admin {
+    set $kb_admin_upstream http://dify_kb_admin:8000;
+    proxy_pass $kb_admin_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Scheme $scheme;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Real-IP $remote_addr;
 }
 ```
 
-### 502 depois de recriar a stack
+5. Teste: `http(s)://<domínio>/kb-admin/healthz` responde `ok`, e `http(s)://<domínio>/kb-admin/`
+   abre a tela de login.
 
-Depois de `remove.sh` + `deploy.sh`, os serviços ganham IPs novos e o NGPM continua usando os
-antigos, respondendo **502** em `/kb-assets/` e `/kb-admin/`. Recarregue o nginx dele, sem queda:
+Os nomes `dify_kb_assets` e `dify_kb_admin` valem para a stack `dify`; com outro `STACK_NAME`, troque
+o prefixo (ex.: `dify-hmg_kb_admin`).
+
+### Por que esta configuração e não as Custom locations
+
+- O nginx do NGPM resolve na **inicialização** os nomes usados em Custom locations. Se um deles não
+  existir (stack removida ou ainda subindo), ou o NGPM **desativa o proxy host inteiro** (o Dify sai
+  do ar), ou o nginx entra em loop com `[emerg] host not found in upstream` e **todos** os domínios
+  caem, inclusive o painel na porta 81.
+- Com o destino em variável, o nome é resolvido **a cada requisição** pelo DNS do Docker (o NGPM já
+  traz `resolver 127.0.0.11 valid=10s`). Stack fora do ar vira só um 502 nessas rotas, e os IPs novos
+  de uma stack recriada são usados em até 10 segundos, sem `nginx -s reload`.
+- O `^~` dá prioridade a estas rotas sobre as regras de cache por extensão do NGPM. Mesmo assim,
+  mantenha **Cache Assets desligado**: ligado, ele desvia para o Dify (404) qualquer imagem ou
+  arquivo `.css`/`.js` que não esteja numa rota com `^~`.
+- O destino principal do proxy host (`dify_nginx`) já é gerado pelo NGPM em variável e não tem o
+  problema.
+
+### Se o NGPM já travou
+
+Para recuperar sem o painel, desative o arquivo do host problemático dentro do container e depois
+corrija o host no painel (passo a passo acima):
+
+```bash
+docker logs --tail 20 $(docker ps -q -f name=ngpm_ngpm) | grep emerg   # mostra o N.conf culpado
+docker exec $(docker ps -q -f name=ngpm_ngpm) mv /data/nginx/proxy_host/N.conf /data/nginx/proxy_host/N.conf.err
+```
+
+Se ainda houver Custom locations antigas e a stack tiver sido recriada (502 em `/kb-assets/` e
+`/kb-admin/`), um reload resolve até a migração para a aba Advanced:
 
 ```bash
 docker exec $(docker ps -q -f name=ngpm_ngpm) nginx -s reload
@@ -535,7 +542,7 @@ direto no navegador).
 - **Mudanças em `nginx/` ou `ssrf_proxy/`:** configs do Swarm são imutáveis, então o redeploy com
   conteúdo alterado falha. Remova a stack (`./remove.sh`, respondendo `n`), espere e faça o deploy
   de novo. O `kb_assets/default.conf` é a exceção: o nome do config leva o hash do arquivo, e basta
-  o deploy. Depois de recriar a stack, recarregue o NGPM (seção 6).
+  o deploy.
 - **Logs do `kb_admin`:** `docker service logs -f dify_kb_admin` (login, chamadas ao Dify e erros).
 - **Primeira subida:** a migração do banco (`flask upgrade-db`) roda no `api`, no `worker` ou no
   `worker_beat` (quem pegar a trava no Redis) e leva vários minutos com o banco vazio (~6 min no
@@ -551,9 +558,9 @@ direto no navegador).
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | "Ocorreu um erro inesperado ao renderizar este componente" | SSR do `web` não alcança o domínio, CA errada ou sessão de uma instalação anterior | Seção 7; limpar os dados do site no navegador |
-| 502 em `/kb-assets/` ou `/kb-admin/` | NGPM com IPs antigos depois de recriar a stack | `nginx -s reload` no NGPM (seção 6) |
-| Todos os domínios do NGPM fora do ar | custom location apontando para serviço inexistente | Seção 6, "Como não travar o NGPM" |
-| Imagens dos manuais com 404 pelo domínio, mas 200 dentro da rede | Cache Assets ligado no proxy host | Desligar (seção 6) |
+| 502 em `/kb-assets/` ou `/kb-admin/` | stack fora do ar ou ainda subindo; ou Custom locations antigas com IPs de antes de recriar a stack | `docker stack services dify`; migrar para a aba Advanced (seção 6) |
+| Todos os domínios do NGPM fora do ar, inclusive o painel | Custom location apontando para serviço inexistente | Seção 6, "Se o NGPM já travou" |
+| Imagens dos manuais com 404 pelo domínio, mas 200 dentro da rede | Cache Assets ligado, ou `/kb-assets/` como Custom location | Seção 6, passo a passo |
 | 502 no Dify com `connect() failed (111)` no log do `nginx` | colisão de nomes curtos com outra stack em `net_nginx_pm` | A stack já usa nomes completos (`<stack>_api` etc.); confira se o template do Swarm está em uso |
 | Login no `kb_admin`: "Não foi possível falar com o Dify" | API fora do ar ou incompatível | `docker service logs dify_kb_admin` mostra a chamada que falhou |
 | `kb_admin`: "Seu papel no Dify (editor) permite só consulta." | perfil editor | Peça a um owner ou admin |
