@@ -9,12 +9,15 @@ pelo `docker/kb_assets/publish.sh`, na linha de comando, e o `.md` com URLs
 absolutas é enviado à mão pela interface do Dify. O objetivo é uma interface web
 simples, na mesma stack do Dify, que permita a quem já administra bases no Dify
 enviar o pacote `.zip` de um manual, publicar as imagens, baixar o `.md`
-convertido e gerenciar (listar, substituir, apagar) os manuais publicados.
+convertido, ver os parâmetros recomendados para o ingest no Dify (calculados a
+partir do próprio `.md`) e gerenciar (listar, substituir, apagar) os manuais
+publicados.
 
 ## Fora do escopo
 
-- Ingestão do `.md` no Dify: continua sendo feita pela interface do Dify, com
-  as configurações de chunk, indexação e busca ajustadas por lá.
+- Ingestão do `.md` no Dify: continua sendo feita pela interface do Dify. O
+  app só calcula e mostra os parâmetros recomendados; quem os digita é o
+  usuário, na tela de criação do documento no Dify.
 - Apagar ou atualizar documentos/bases no Dify: o app só avisa que isso deve
   ser feito no Dify.
 - Conversão de PDF para `.md` (continua fora do projeto, ver
@@ -126,6 +129,124 @@ convertido e gerenciar (listar, substituir, apagar) os manuais publicados.
    metadados do volume privado. Mensagem final: "Lembre-se de apagar o
    documento correspondente na base de conhecimento do Dify."
 
+## Parâmetros recomendados para o ingest
+
+O app analisa o `.md` convertido (com as URLs absolutas, que são o que o Dify
+recebe) e mostra, na tela do manual, os valores a digitar na tela de ingest do
+Dify, cada um com uma justificativa curta e um botão de copiar. Os valores
+dependem do tamanho e da estrutura de cada `.md`.
+
+### Como o Dify 1.17 processa um `.md` (base do cálculo)
+
+Verificado no código (`api/core/rag/...`):
+
+- Com `ETL_TYPE=dify`, o `MarkdownExtractor` divide o arquivo por títulos
+  (`^#+\s`, fora de blocos de código) antes do chunking: cada seção vira um
+  documento `"<título sem #>\n<corpo>"`. Os `#` são apagados e o texto entre
+  `<` e `>` é removido. Nenhum chunk atravessa um título.
+- Os tamanhos são medidos em caracteres (`len`), com mínimo de 50 e máximo de
+  `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH` (4000 no `.env`).
+- O splitter corta cada seção pelo delimitador (que é descartado) e **não
+  junta** pedaços pequenos. Só o pedaço maior que o limite é recortado de novo,
+  pela ordem `\n\n`, `。`, `. `, ` `, `""`. No corte por espaço as palavras
+  ficam grudadas, então esse caso tem de ser evitado.
+- No Pai-filho, o Top K conta chunks filhos, e os pais repetidos são unidos
+  (podem voltar menos de K pais). Pai-filho exige High Quality. O tipo de chunk
+  (General ou Pai-filho) fica fixo na base depois do primeiro documento.
+- "Delete all URLs and email addresses" preserva `![...](http...)`, mas apaga
+  URLs soltas e e-mails do texto.
+
+Consequência: o delimitador `\n#`, recomendado hoje no
+`docker/kb_assets/README.md`, nunca casa com os títulos (os `#` já foram
+apagados). Ele só funciona por acaso, deixando cada seção inteira como pai.
+
+### Simulação
+
+O módulo `ingest_params` reproduz o pipeline acima, em Python puro e sem
+importar o Dify: extração por títulos, limpeza com "Replace consecutive
+spaces" ligado e as medidas de cada seção, parágrafo (`\n\n`) e linha (`\n`).
+O resultado é uma recomendação determinística. As constantes copiadas do Dify
+(regex do extrator, lista de separadores, limites) ficam num único arquivo,
+com o caminho de origem no Dify 1.17.1 anotado, para conferir quando o Dify for
+atualizado.
+
+### Regras
+
+Modo e pré-processamento (fixos, com justificativa):
+
+| Parâmetro | Valor | Motivo |
+|---|---|---|
+| Chunk mode | Parent-child, parent em **Paragraph** | o pai (seção inteira, com as imagens) vai para o LLM, o filho (pequeno) é usado na busca. Full-doc mandaria o manual inteiro e pularia a limpeza. |
+| Replace consecutive spaces, newlines and tabs | marcado | necessário para a regra do delimitador do pai |
+| Delete all URLs and email addresses | desmarcado | manuais citam e-mails e endereços de portais |
+| Summary Auto-Gen | desligado | o resumo não carrega as imagens |
+| Index method | High Quality | exigido pelo Pai-filho |
+| Embedding model | o que a base já usa | o app não tem como escolher |
+
+Chunk pai (calculado):
+
+- **Delimiter:** uma sequência que não aparece em nenhuma seção depois da
+  limpeza, para que cada seção vire um único pai e o passo fique junto das
+  suas imagens. Primeiro candidato: `\n\n\n`, que nunca sobra porque a limpeza
+  troca 3 ou mais quebras por 2. Se aparecer (por exemplo, dentro de um bloco
+  de código), o app tenta os próximos candidatos de uma lista fixa.
+- **Maximum chunk length:** o tamanho da maior seção, arredondado para cima ao
+  múltiplo de 100, com mínimo de 500 e teto em
+  `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH`.
+- Seção maior que o teto: **aviso** com o título e o tamanho, sugerindo
+  dividi-la com subtítulos. Nesse caso o Dify recorta a seção e pode separar
+  um passo da sua imagem.
+
+Chunk filho (calculado):
+
+- **Delimiter:** `\n\n` (parágrafo) se todos os parágrafos cabem no teto do
+  filho (`KB_CHILD_MAX_LENGTH`, padrão 1000 caracteres, seguro para modelos de
+  embedding de 512 tokens). Senão, `\n` (linha), que divide listas e tabelas
+  linha a linha.
+- **Maximum chunk length:** o tamanho do maior parágrafo (ou da maior linha),
+  arredondado para cima ao múltiplo de 50, com mínimo de 100 e teto em
+  `KB_CHILD_MAX_LENGTH`.
+- Linha maior que o teto: aviso com o trecho. O Dify cortaria por espaço,
+  grudando as palavras.
+
+Busca (configuração da base, igual para todos os manuais dela):
+
+- **Hybrid Search.** Com modelo de rerank configurado no Dify, ligar o Rerank;
+  sem ele, usar Weighted Score 0.7 semântico / 0.3 palavra-chave (o padrão
+  do Dify).
+- **Top K:** o número de filhos por seção (mediana) vezes 3 (cerca de três
+  seções distintas por pergunta, já que o Top K conta filhos), limitado entre
+  3 e 10. Como vale para a base inteira, a tela avisa: "Se a base tiver
+  outros manuais, use o maior Top K recomendado entre eles".
+- **Score Threshold:** desligado. O valor depende do modelo de embedding e
+  deve ser ajustado testando no Dify ("Retrieval Testing").
+
+Avisos extras da análise:
+
+- texto entre `<` e `>` fora de bloco de código (o Dify apaga esse texto);
+- `#` dentro de títulos (ex.: "C#"), que o Dify também apaga;
+- se a base já tiver documentos em modo General, o Pai-filho não poderá ser
+  usado nela (o tipo de chunk é fixo por base).
+
+Exemplo com o `manual-office365-rag` (convertido):
+
+- 25 seções, maior com 2.442 caracteres → pai: delimitador `\n\n\n`, tamanho
+  2500;
+- maior parágrafo com 2.341 caracteres (a tabela de "Problemas Comuns") passa
+  do teto de 1000 → filho: delimitador `\n`, tamanho 300 (maior linha: 296).
+- mediana de 8 filhos por seção → Top K = 8 × 3 = 24, limitado a 10.
+
+### Onde aparece
+
+- Na tela do manual: o painel "Parâmetros para o ingest no Dify" (a tabela
+  acima com os valores calculados), os avisos e um resumo (seções, maior
+  seção, quantidade estimada de chunks pai e filho).
+- Na tela de confirmação de substituição: os parâmetros antigos e os novos
+  lado a lado, destacando o que mudou (por exemplo, o tamanho máximo do pai).
+  Se mudou, o documento precisa ser reprocessado no Dify com os novos valores.
+- Os parâmetros são recalculados a cada exibição a partir do `.md` guardado,
+  e não ficam gravados no `meta.json`.
+
 ## Publicação atômica
 
 - As imagens são gravadas em `/data/kb-assets/.<slug>.tmp-<id>/`. Depois o app
@@ -152,9 +273,12 @@ convertido e gerenciar (listar, substituir, apagar) os manuais publicados.
 - `docker/kb_assets/default.conf`: cabeçalho `Content-Security-Policy: sandbox`.
 - `docker/deploy.sh`: construir a imagem `dify-kb-admin:local` antes do deploy.
 - `docker/kb_assets/README.md` (ou novo `docker/kb_admin/README.md`): uso da
-  interface e configuração da custom location `/kb-admin/` no NGPM.
-- `.env.example`: `KB_ASSETS_BASE_URL` e `KB_ADMIN_SECRET_KEY` (opcionais,
-  comentados).
+  interface e configuração da custom location `/kb-admin/` no NGPM. A seção
+  "Base de conhecimento no Dify" deixa de recomendar o delimitador `\n#` e
+  passa a apontar para os parâmetros calculados pelo app.
+- `.env.example`: `KB_ASSETS_BASE_URL`, `KB_ADMIN_SECRET_KEY` e
+  `KB_CHILD_MAX_LENGTH` (opcionais, comentados). O `kb_admin` lê
+  `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH` do mesmo `.env` do Dify.
 - O `publish.sh` continua funcionando como alternativa na linha de comando.
 
 ## Testes
@@ -167,9 +291,17 @@ convertido e gerenciar (listar, substituir, apagar) os manuais publicados.
     `APP_WEB_URL`.
   - Publicação atômica, substituição (diff de imagens), exclusão e pastas
     legadas.
+  - Parâmetros de ingest: a simulação do extrator (títulos, `#` apagados,
+    blocos de código, `<...>` removido), as regras de delimitador e tamanho
+    do pai e do filho (seção no teto, acima do teto, parágrafo grande que
+    leva a `\n`, linha acima do teto), o Top K e os avisos. Inclui um teste
+    com `.md` sintético da mesma forma do manual do Office 365 e o resultado
+    esperado (pai 2500 com `\n\n\n`, filho `\n`).
   - Login com o Dify simulado: sucesso, papel sem permissão, senha errada,
     rate limit, Dify fora do ar. Também sessão expirada e CSRF.
 - `docker/kb_assets/test_default_conf.sh` passa a conferir o cabeçalho CSP.
 - Teste manual: subir a stack de DEV, configurar `/kb-admin/` no NGPM, enviar
   o `manual-office365-rag.zip`, abrir uma imagem pela URL pública, baixar o
-  `.md`, conferir as URLs e apagar o manual.
+  `.md`, conferir as URLs, fazer o ingest no Dify com os parâmetros
+  recomendados, conferir no "Preview Chunk" que cada pai é uma seção inteira
+  com as suas imagens e testar uma pergunta no chat. Depois, apagar o manual.
