@@ -286,6 +286,40 @@ Remova:
 
 Não remova conteúdo técnico real.
 
+## Regras exigidas pela ingestão no Dify
+
+O Markdown será processado pelo Dify, que divide o arquivo pelos títulos antes
+de cortar o texto em trechos (chunks). As regras abaixo são obrigatórias para que
+cada seção chegue inteira ao chatbot, com as suas imagens.
+
+1. **Nome do pacote:** use só letras minúsculas sem acento, números e hífen (ex.:
+   `manual-office365-rag`). A pasta, o arquivo `.md` e o `.zip` têm exatamente
+   esse mesmo nome.
+2. **Títulos:** todo título é uma linha que começa com `#` seguido de espaço
+   (`## Seção`). Não use linhas em negrito como título (`**Seção**`), pois o
+   Dify não as reconhece. Não use `#` no texto do título (escreva "C Sharp" em vez
+   de "C#"), pois o Dify apaga esse caractere.
+3. **Tamanho das seções:** cada seção (do título até o próximo título, de qualquer
+   nível) deve ter no máximo **3.000 caracteres**, contando as linhas de imagem.
+   Se uma seção ficar maior, divida-a com subtítulos que façam sentido sozinhos
+   (ex.: "Problemas Comuns — Instalação" e "Problemas Comuns — MFA"). Uma seção
+   grande demais é cortada pelo Dify em pontos arbitrários e pode separar um passo
+   da sua imagem.
+4. **Tamanho das linhas:** nenhuma linha (parágrafo sem quebra, item de lista ou
+   linha de tabela) deve passar de **1.000 caracteres**. Não junte vários passos
+   numa linha só; quebre parágrafos longos em frases ou itens.
+5. **Tabelas:** cada linha da tabela pode ser recuperada sozinha pela busca.
+   Escreva cada linha de forma autocontida, repetindo o nome do item quando
+   necessário, e não use células como "idem" ou "o mesmo acima". Tabelas com
+   mais de 3.000 caracteres devem ser divididas em seções com subtítulos.
+6. **Texto entre `<` e `>`:** o Dify apaga tudo o que estiver entre `<` e `>`
+   fora de blocos de código. Não use HTML nem marcações como `<Enter>` ou
+   `<nome-do-usuário>`; escreva **Enter** ou `nome-do-usuário` (entre crases).
+7. **Imagens:** use somente a forma `![descrição](images/arquivo.png)`, sem
+   `<img>` e sem o estilo de referência (`![descrição][id]`). A descrição também
+   é usada na busca, então descreva o que a imagem mostra (ex.: "Tela de
+   escolha do método de autenticação"), não apenas "Imagem 3".
+
 ## README.md
 
 Crie também um `README.md` explicando a estrutura do pacote.
@@ -333,7 +367,10 @@ Antes de concluir:
 7. verifique se URLs e caminhos técnicos foram preservados;
 8. verifique se nenhuma informação foi inventada;
 9. verifique se não há referências quebradas;
-10. verifique se as seções permanecem semanticamente compreensíveis quando recuperadas isoladamente.
+10. verifique se as seções permanecem semanticamente compreensíveis quando recuperadas isoladamente;
+11. verifique se nenhuma seção passa de 3.000 caracteres e nenhuma linha passa de 1.000 caracteres;
+12. verifique se não há texto entre `<` e `>` fora de blocos de código;
+13. verifique se a pasta, o `.md` e o `.zip` têm o mesmo nome, só com letras minúsculas, números e hífen.
 
 ## Entrega
 

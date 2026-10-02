@@ -181,7 +181,7 @@ Modo e pré-processamento (fixos, com justificativa):
 | Delete all URLs and email addresses | desmarcado | manuais citam e-mails e endereços de portais |
 | Summary Auto-Gen | desligado | o resumo não carrega as imagens |
 | Index method | High Quality | exigido pelo Pai-filho |
-| Embedding model | o que a base já usa | o app não tem como escolher |
+| Embedding model | `text-embedding-3-small` (o da base) | o app só exibe; a escolha é feita na base |
 
 Chunk pai (calculado):
 
@@ -193,15 +193,18 @@ Chunk pai (calculado):
 - **Maximum chunk length:** o tamanho da maior seção, arredondado para cima ao
   múltiplo de 100, com mínimo de 500 e teto em
   `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH`.
-- Seção maior que o teto: **aviso** com o título e o tamanho, sugerindo
-  dividi-la com subtítulos. Nesse caso o Dify recorta a seção e pode separar
-  um passo da sua imagem.
+- Seção com mais de 3.000 caracteres: aviso "acima do recomendado pelo
+  PDF_TO_RAG", com o título e o tamanho. Seção maior que o teto (4000): aviso
+  de erro, sugerindo dividi-la com subtítulos, porque o Dify recorta a seção e
+  pode separar um passo da sua imagem.
 
 Chunk filho (calculado):
 
 - **Delimiter:** `\n\n` (parágrafo) se todos os parágrafos cabem no teto do
-  filho (`KB_CHILD_MAX_LENGTH`, padrão 1000 caracteres, seguro para modelos de
-  embedding de 512 tokens). Senão, `\n` (linha), que divide listas e tabelas
+  filho (`KB_CHILD_MAX_LENGTH`, padrão 1000 caracteres). O modelo de embedding
+  previsto, `text-embedding-3-small`, aceita 8.191 tokens, então o teto não vem
+  do modelo, e sim da precisão da busca: filhos menores casam melhor com a
+  pergunta. Senão, `\n` (linha), que divide listas e tabelas
   linha a linha.
 - **Maximum chunk length:** o tamanho do maior parágrafo (ou da maior linha),
   arredondado para cima ao múltiplo de 50, com mínimo de 100 e teto em
@@ -209,11 +212,23 @@ Chunk filho (calculado):
 - Linha maior que o teto: aviso com o trecho. O Dify cortaria por espaço,
   grudando as palavras.
 
+### Alinhamento com o prompt de conversão
+
+As regras que o `.md` precisa seguir estão em
+`docker/kb_assets/docs/PDF_TO_RAG.md`, seção "Regras exigidas pela ingestão no
+Dify": títulos com `#` e espaço, seções de até 3.000 caracteres, linhas de até
+1.000, tabelas com linhas autocontidas, nada entre `<` e `>` e nome do pacote
+igual ao do `.md` e do `.zip`. Os avisos do app usam os mesmos números e citam
+a regra correspondente do prompt. Se um limite mudar, ele muda nos dois
+lugares.
+
 Busca (configuração da base, igual para todos os manuais dela):
 
-- **Hybrid Search.** Com modelo de rerank configurado no Dify, ligar o Rerank;
-  sem ele, usar Weighted Score 0.7 semântico / 0.3 palavra-chave (o padrão
-  do Dify).
+- **Hybrid Search** com **Rerank Model** ligado, usando o modelo previsto
+  `jina-reranker-v3`. Se a base não tiver modelo de rerank, a alternativa é
+  Weighted Score 0.7 semântico / 0.3 palavra-chave (o padrão do Dify). Os
+  nomes dos modelos ficam em variáveis (`KB_EMBEDDING_MODEL_LABEL` e
+  `KB_RERANK_MODEL_LABEL`) e servem só para o texto exibido.
 - **Top K:** o número de filhos por seção (mediana) vezes 3 (cerca de três
   seções distintas por pergunta, já que o Top K conta filhos), limitado entre
   3 e 10. Como vale para a base inteira, a tela avisa: "Se a base tiver
@@ -276,8 +291,9 @@ Exemplo com o `manual-office365-rag` (convertido):
   interface e configuração da custom location `/kb-admin/` no NGPM. A seção
   "Base de conhecimento no Dify" deixa de recomendar o delimitador `\n#` e
   passa a apontar para os parâmetros calculados pelo app.
-- `.env.example`: `KB_ASSETS_BASE_URL`, `KB_ADMIN_SECRET_KEY` e
-  `KB_CHILD_MAX_LENGTH` (opcionais, comentados). O `kb_admin` lê
+- `.env.example`: `KB_ASSETS_BASE_URL`, `KB_ADMIN_SECRET_KEY`,
+  `KB_CHILD_MAX_LENGTH`, `KB_EMBEDDING_MODEL_LABEL` e `KB_RERANK_MODEL_LABEL`
+  (opcionais, comentados). O `kb_admin` lê
   `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH` do mesmo `.env` do Dify.
 - O `publish.sh` continua funcionando como alternativa na linha de comando.
 
