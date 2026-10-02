@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{% if slug %}Substituir {{ slug }}{% else %}Enviar manual{% endif %}</h1>
+{% if problems %}
+<div class="msg error">
+  <strong>{{ error }}</strong>
+  <ul>{% for problem in problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+  <p>As regras do pacote estão no prompt de conversão (PDF_TO_RAG).</p>
+</div>
+{% endif %}
+<div class="box">
+  <p>Envie o <code>.zip</code> do manual. O nome do zip é o nome do manual{% if slug %}; para substituir, envie <code>{{ slug }}.zip</code>{% endif %}.
+     Dentro dele: uma pasta com o mesmo nome, o <code>.md</code> com o mesmo nome e a pasta <code>images/</code>.</p>
+  <form method="post" action="{{ prefix }}/upload" enctype="multipart/form-data" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <input type="file" name="file" accept=".zip" required>
+    <button type="submit">Enviar</button>
+    <a class="button secondary" href="{{ prefix }}/">Voltar</a>
+  </form>
+</div>
+{% endblock %}

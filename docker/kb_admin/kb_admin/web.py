@@ -7,15 +7,17 @@ from pathlib import Path
 from typing import Annotated, Protocol
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from kb_admin.auth import SessionCodec, UserSession, new_session
 from kb_admin.config import SESSION_MAX_AGE_SECONDS, Settings
-from kb_admin.errors import AuthError, KbAdminError, ManualNotFoundError
-from kb_admin.package import SLUG_PATTERN
+from kb_admin.errors import AuthError, KbAdminError, ManualNotFoundError, PackageError
+from kb_admin.ingest_params import IngestRecommendation, ParameterRow, parameter_rows, recommend
+from kb_admin.markdown_rules import rewrite_image_urls
+from kb_admin.package import SLUG_PATTERN, UPLOADED_ZIP, ManualPackage, read_package, save_upload
 from kb_admin.storage import ManualStore
 
 PREFIX = "/kb-admin"
@@ -153,5 +155,133 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
         deleted_slug = deleted if deleted and SLUG_PATTERN.match(deleted) else None
         context = {"user": user, "manuals": store.list_manuals(), "deleted": deleted_slug}
         return render(request, "list.html", context)
+
+    def slug_url(slug: str) -> str:
+        """URL pública das imagens do manual. Entrada: slug. Saída: URL sem barra final."""
+        return f"{settings.assets_base_url}/{slug}"
+
+    def recommendation_for(slug: str, markdown: str) -> IngestRecommendation:
+        """Recomendação sobre o .md convertido. Entrada: slug e .md original. Saída: IngestRecommendation."""
+        return recommend(
+            rewrite_image_urls(markdown, slug_url(slug)), settings.child_max_length, settings.max_segmentation_length
+        )
+
+    def rows_for(recommendation: IngestRecommendation) -> list[ParameterRow]:
+        """Tabela de parâmetros. Entrada: recomendação. Saída: linhas com os modelos configurados."""
+        return parameter_rows(recommendation, settings.embedding_model_label, settings.rerank_model_label)
+
+    def confirm_context(user: UserSession, token: str, package: ManualPackage) -> dict[str, object]:
+        """Monta a tela de substituição. Entrada: sessão, token e pacote. Saída: contexto do template."""
+        legacy = store.is_legacy(package.slug)
+        old_values: dict[tuple[str, str], str] = {}
+        if not legacy:
+            old_rows = rows_for(recommendation_for(package.slug, store.get_markdown(package.slug)))
+            old_values = {(row.group, row.name): row.value for row in old_rows}
+        new_rows = rows_for(recommendation_for(package.slug, package.markdown))
+        changed = any(old_values.get((row.group, row.name), row.value) != row.value for row in new_rows)
+        return {
+            "user": user,
+            "token": token,
+            "package": package,
+            "diff": store.diff(package),
+            "rows": new_rows,
+            "old_values": old_values,
+            "legacy": legacy,
+            "params_changed": changed,
+        }
+
+    @app.get(f"{PREFIX}/upload", response_class=HTMLResponse)
+    def upload_form(request: Request, user: User, slug: str | None = None) -> Response:
+        """Tela de envio. Entrada: sessão e slug a substituir (opcional). Saída: formulário."""
+        target = slug if slug and SLUG_PATTERN.match(slug) else None
+        return render(request, "upload.html", {"user": user, "slug": target, "problems": [], "error": None})
+
+    @app.post(f"{PREFIX}/upload", response_class=HTMLResponse)
+    def upload(request: Request, user: User, csrf_token: CsrfField, file: Annotated[UploadFile, File()]) -> Response:
+        """Recebe o zip. Entrada: sessão, CSRF e arquivo. Saída: manual publicado, confirmação ou lista de problemas."""
+        check_csrf(user, csrf_token)
+        token, staging = store.new_staging()
+        try:
+            zip_path = staging / UPLOADED_ZIP
+            save_upload(file.file, zip_path)
+            package = read_package(zip_path, file.filename or "", staging)
+            zip_path.unlink()
+        except PackageError as exc:
+            store.discard(token)
+            context = {"user": user, "slug": None, "problems": exc.problems, "error": exc.message}
+            return render(request, "upload.html", context, 400)
+        except Exception:
+            store.discard(token)
+            raise
+        if store.exists(package.slug):
+            store.save_pending(token, package, user.email)
+            return render(request, "confirm.html", confirm_context(user, token, package))
+        try:
+            store.publish(package, user.email)
+        finally:
+            store.discard(token)
+        return RedirectResponse(f"{PREFIX}/manuals/{package.slug}?published=1", status_code=303)
+
+    @app.post(f"{PREFIX}/upload/{{token}}/confirm")
+    def confirm_upload(token: str, user: User, csrf_token: CsrfField) -> Response:
+        """Publica a substituição. Entrada: token, sessão e CSRF. Saída: redirecionamento à tela do manual."""
+        check_csrf(user, csrf_token)
+        package = store.load_pending(token, user.email)
+        store.publish(package, user.email)
+        store.discard(token)
+        return RedirectResponse(f"{PREFIX}/manuals/{package.slug}?published=1", status_code=303)
+
+    @app.post(f"{PREFIX}/upload/{{token}}/cancel")
+    def cancel_upload(token: str, user: User, csrf_token: CsrfField) -> Response:
+        """Descarta a substituição. Entrada: token, sessão e CSRF. Saída: redirecionamento à lista."""
+        check_csrf(user, csrf_token)
+        store.discard(token)
+        return RedirectResponse(f"{PREFIX}/", status_code=303)
+
+    @app.get(f"{PREFIX}/manuals/{{slug}}", response_class=HTMLResponse)
+    def manual_page(request: Request, slug: str, user: User, published: int = 0) -> Response:
+        """Tela do manual. Entrada: slug, sessão e flag de recém-publicado. Saída: galeria, parâmetros e ações."""
+        if not store.exists(slug):
+            raise ManualNotFoundError(f"Manual “{slug}” não encontrado.")
+        legacy = store.is_legacy(slug)
+        context: dict[str, object] = {
+            "user": user,
+            "slug": slug,
+            "legacy": legacy,
+            "images": store.published_images(slug),
+            "slug_url": slug_url(slug),
+            "published": bool(published),
+            "meta": None,
+            "recommendation": None,
+            "rows": [],
+        }
+        if not legacy:
+            recommendation = recommendation_for(slug, store.get_markdown(slug))
+            context.update(meta=store.get_meta(slug), recommendation=recommendation, rows=rows_for(recommendation))
+        return render(request, "manual.html", context)
+
+    @app.get(f"{PREFIX}/manuals/{{slug}}/download")
+    def download(slug: str, user: User) -> Response:
+        """Baixa o .md para o Dify. Entrada: slug e sessão. Saída: <slug>.md com URLs absolutas."""
+        content = rewrite_image_urls(store.get_markdown(slug), slug_url(slug))
+        return Response(
+            content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
+        )
+
+    @app.get(f"{PREFIX}/manuals/{{slug}}/delete", response_class=HTMLResponse)
+    def delete_form(request: Request, slug: str, user: User) -> Response:
+        """Confirmação de exclusão. Entrada: slug e sessão. Saída: página de confirmação."""
+        if not store.exists(slug):
+            raise ManualNotFoundError(f"Manual “{slug}” não encontrado.")
+        return render(request, "delete.html", {"user": user, "slug": slug, "legacy": store.is_legacy(slug)})
+
+    @app.post(f"{PREFIX}/manuals/{{slug}}/delete")
+    def delete(slug: str, user: User, csrf_token: CsrfField) -> Response:
+        """Apaga o manual. Entrada: slug, sessão e CSRF. Saída: redirecionamento à lista com aviso."""
+        check_csrf(user, csrf_token)
+        store.delete(slug)
+        return RedirectResponse(f"{PREFIX}/?deleted={slug}", status_code=303)
 
     return app

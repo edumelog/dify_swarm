@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Apagar {{ slug }}?</h1>
+<div class="msg warn">
+  As imagens saem do ar imediatamente{% if not legacy %} e o .md guardado é apagado{% endif %}.
+  O documento na base de conhecimento do Dify não é apagado por aqui: apague-o no Dify.
+</div>
+<div class="actions">
+  <form method="post" action="{{ prefix }}/manuals/{{ slug }}/delete">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <button type="submit" class="danger">Apagar</button>
+  </form>
+  <a class="button secondary" href="{{ prefix }}/manuals/{{ slug }}">Cancelar</a>
+</div>
+{% endblock %}

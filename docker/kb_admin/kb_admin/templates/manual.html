@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+{% if published %}<div class="msg ok">Manual publicado.</div>{% endif %}
+<h1>{{ slug }}</h1>
+{% if legacy %}
+<div class="msg warn">Pasta publicada fora da interface (sem .md): não há .md para baixar nem parâmetros. Reenvie o manual como zip para gerenciá-lo aqui.</div>
+{% else %}
+<p>Publicado em {{ meta.published_at | local_datetime }} por {{ meta.published_by }}.</p>
+{% endif %}
+<div class="actions">
+  {% if not legacy %}
+  <a class="button" href="{{ prefix }}/manuals/{{ slug }}/download">Baixar .md para o Dify</a>
+  <a class="button secondary" href="{{ prefix }}/upload?slug={{ slug }}">Substituir</a>
+  {% endif %}
+  <a class="button danger" href="{{ prefix }}/manuals/{{ slug }}/delete">Apagar</a>
+</div>
+{% if not legacy %}
+<p><small>Este .md só funciona no Dify de {{ public_host }}. Envie sempre o arquivo baixado aqui, nunca o .md original do zip.</small></p>
+<div class="box">
+  <h2>Parâmetros para o ingest no Dify</h2>
+  <p>{{ recommendation.section_count }} seções; a maior tem {{ recommendation.largest_section_length }} caracteres.
+     Estimativa: {{ recommendation.section_count }} chunks pai e {{ recommendation.estimated_child_chunks }} chunks filho.</p>
+  {% if recommendation.warnings %}
+  <div class="msg warn"><ul>{% for warning in recommendation.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  <table>
+    <thead><tr><th>Grupo</th><th>Parâmetro</th><th>Valor</th><th>Motivo</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td>{{ row.group }}</td><td>{{ row.name }}</td><td><code>{{ row.value }}</code></td><td>{{ row.reason }}</td>
+        <td><button type="button" class="secondary" data-copy="{{ row.value }}">Copiar</button></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><small>O tipo de chunk fica fixo na base depois do primeiro documento: se a base já tiver documentos em modo General, o Parent-child não poderá ser usado nela.</small></p>
+</div>
+{% endif %}
+<h2>Imagens publicadas ({{ images | length }})</h2>
+<div class="gallery">
+  {% for name in images %}
+  <figure><a href="{{ slug_url }}/{{ name }}" target="_blank" rel="noopener"><img src="{{ slug_url }}/{{ name }}" alt="{{ name }}" loading="lazy"></a>
+    <figcaption>{{ slug_url }}/{{ name }}</figcaption></figure>
+  {% endfor %}
+</div>
+{% endblock %}

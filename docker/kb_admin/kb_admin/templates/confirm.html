@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Substituir {{ package.slug }}?</h1>
+{% if legacy %}
+<div class="msg warn">Este manual foi publicado fora da interface. As imagens atuais serão trocadas pelas do zip.</div>
+{% endif %}
+<div class="box">
+  <h2>Imagens</h2>
+  {% if diff.has_changes %}
+  <p><strong>Entram ({{ diff.added | length }}):</strong> {{ diff.added | join(", ") or "nenhuma" }}</p>
+  <p><strong>Saem ({{ diff.removed | length }}):</strong> {{ diff.removed | join(", ") or "nenhuma" }}</p>
+  <p><strong>Mudam ({{ diff.changed | length }}):</strong> {{ diff.changed | join(", ") or "nenhuma" }}</p>
+  {% else %}
+  <p>As imagens são as mesmas.</p>
+  {% endif %}
+</div>
+{% if package.warnings %}
+<div class="msg warn"><ul>{% for warning in package.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+{% endif %}
+<div class="box">
+  <h2>Parâmetros de ingest</h2>
+  {% if params_changed %}
+  <div class="msg warn">Há parâmetros diferentes (destacados). Depois de publicar, o documento precisa ser reprocessado no Dify com os novos valores.</div>
+  {% endif %}
+  <table>
+    <thead><tr><th>Grupo</th><th>Parâmetro</th><th>Atual</th><th>Novo</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      {% set old = old_values.get((row.group, row.name)) %}
+      <tr{% if old is not none and old != row.value %} class="changed"{% endif %}>
+        <td>{{ row.group }}</td><td>{{ row.name }}</td><td><code>{{ old if old is not none else "—" }}</code></td><td><code>{{ row.value }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="actions">
+  <form method="post" action="{{ prefix }}/upload/{{ token }}/confirm">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <button type="submit">Confirmar substituição</button>
+  </form>
+  <form method="post" action="{{ prefix }}/upload/{{ token }}/cancel">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <button type="submit" class="secondary">Cancelar</button>
+  </form>
+</div>
+{% endblock %}
