@@ -40,7 +40,7 @@ def test_success_returns_role_and_forwards_tokens() -> None:
     assert login_body["email"] == "ana@camara.rj"
     assert base64.b64decode(login_body["password"]).decode() == "s3nh@"
     workspace = seen[1]
-    assert workspace.method == "POST" and workspace.url.path == "/console/api/workspaces/current"
+    assert workspace.method == "GET" and workspace.url.path == "/console/api/workspaces/current/summary"
     assert workspace.headers["authorization"] == "Bearer tok-acesso"
     assert workspace.headers["x-csrf-token"] == "tok-csrf"
     assert workspace.headers["cookie"] == "csrf_token=tok-csrf"

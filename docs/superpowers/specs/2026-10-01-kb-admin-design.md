@@ -65,7 +65,9 @@ publicados.
 - Tela de login com e-mail e senha. O app chama
   `POST http://api:5001/console/api/login` com `{"email", "password": base64(senha)}`.
   Se der certo, usa os cookies devolvidos para chamar
-  `POST /console/api/workspaces/current` e ler o papel (`role`) do usuário.
+  `GET /console/api/workspaces/current/summary` e ler o papel (`role`) do usuário
+  (na imagem `langgenius/dify-api:1.17.1` em execução; o código-fonte em `api/` deste
+  repositório é de outra versão e ainda tem o antigo `POST /workspaces/current`).
   Essa chamada exige o token de acesso e o token CSRF que o login devolve em
   cookies. Com https, os cookies saem com prefixo `__Host-` e `Secure`, então
   o app os lê do `Set-Cookie` e os reenvia manualmente (`Authorization:

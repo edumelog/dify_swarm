@@ -6,7 +6,8 @@ import re
 import statistics
 from dataclasses import dataclass
 
-# --- Constantes copiadas do Dify 1.17.1 (conferir ao atualizar o Dify) ---
+# --- Constantes copiadas da imagem langgenius/dify-api:1.17.1 em execução (conferir ao atualizar o Dify;
+# o código-fonte em api/ deste repositório não é o mesmo da imagem) ---
 # api/core/rag/extractor/markdown_extractor.py, markdown_to_tups()
 DIFY_HEADER_PATTERN = re.compile(r"^#+\s")
 DIFY_CODE_FENCE = "```"
@@ -15,7 +16,7 @@ DIFY_TAG_PATTERN = re.compile(r"<.*?>")
 DIFY_DEFAULT_CLEANING = (
     (re.compile(r"<\|"), "<"),
     (re.compile(r"\|>"), ">"),
-    (re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\xEF\xBF\xBE]"), ""),
+    (re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]"), ""),
     (re.compile("￾"), ""),
 )
 DIFY_EXTRA_NEWLINES = re.compile(r"\n{3,}")

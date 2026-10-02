@@ -13,7 +13,8 @@ from kb_admin.errors import AuthError
 
 ALLOWED_ROLES = frozenset({"owner", "admin", "editor"})
 LOGIN_PATH = "/console/api/login"
-WORKSPACE_PATH = "/console/api/workspaces/current"
+# Na imagem langgenius/dify-api:1.17.1 o papel vem de GET .../summary (o POST /workspaces/current não existe).
+WORKSPACE_PATH = "/console/api/workspaces/current/summary"
 ACCESS_COOKIE = "access_token"
 CSRF_COOKIE = "csrf_token"
 HOST_PREFIX = "__Host-"
@@ -133,7 +134,7 @@ class DifyAuthClient:
                 client.cookies.clear()
                 _, access_token = _find_cookie(cookies, ACCESS_COOKIE)
                 csrf_name, csrf_token = _find_cookie(cookies, CSRF_COOKIE)
-                workspace = client.post(
+                workspace = client.get(
                     WORKSPACE_PATH,
                     headers={
                         "Authorization": f"Bearer {access_token}",

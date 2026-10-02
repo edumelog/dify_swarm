@@ -121,3 +121,8 @@ def test_html_comments_do_not_warn() -> None:
     """Comentários HTML (ex.: página de origem do PDF) somem no Dify sem prejuízo: não geram aviso."""
     rec = recommend("## A\n\n<!-- source_page: 3 -->\nTexto.\n", 1000, 4000)
     assert rec.warnings == ()
+
+
+def test_cleaning_keeps_latin1_letters() -> None:
+    """A limpeza do Dify 1.17.1 em execução não remove ï, ¿ nem ¾ (o código-fonte do repositório removia)."""
+    assert extract_sections("## A\n\nÍndice ï ¿ ¾\n")[0].text == "\n\nA\nÍndice ï ¿ ¾"
