@@ -30,7 +30,11 @@ publicados.
   Código em `docker/kb_admin/`. A imagem é construída localmente
   (`dify-kb-admin:local`) pelo `deploy.sh` antes do `docker stack deploy`.
 - Acesso pelo mesmo domínio do Dify, em `/kb-admin/`, via custom location no
-  NGPM apontando para `dify_kb_admin:8000`. O app roda com `root_path=/kb-admin`.
+  NGPM apontando para `dify_kb_admin:8000`. O NGPM repassa o caminho completo,
+  então todas as rotas do app ficam sob o prefixo `/kb-admin` (inclusive
+  `/kb-admin/healthz`, sem login, usado no teste do deploy). Os estilos e o
+  pouco JavaScript ficam embutidos no HTML, sem arquivos estáticos, para não
+  esbarrar no "Cache Assets" do NGPM.
 - Redes: `net_nginx_pm` (para o NGPM) e `default` (para alcançar `api:5001`).
 - Volumes:
   - `dify_kb_assets` (já existe): montado com escrita no `kb_admin` em
@@ -61,7 +65,11 @@ publicados.
 - Tela de login com e-mail e senha. O app chama
   `POST http://api:5001/console/api/login` com `{"email", "password": base64(senha)}`.
   Se der certo, usa os cookies devolvidos para chamar
-  `GET /console/api/workspaces/current` e ler o papel (`role`) do usuário.
+  `POST /console/api/workspaces/current` e ler o papel (`role`) do usuário.
+  Essa chamada exige o token de acesso e o token CSRF que o login devolve em
+  cookies. Com https, os cookies saem com prefixo `__Host-` e `Secure`, então
+  o app os lê do `Set-Cookie` e os reenvia manualmente (`Authorization:
+  Bearer`, cabeçalho `X-CSRF-Token` e o cookie CSRF).
 - Só entram os papéis `owner`, `admin` e `editor`. Os outros recebem "Sem
   permissão para gerenciar a base de conhecimento".
 - Erros do Dify viram mensagens em português: credenciais inválidas, conta
@@ -187,9 +195,9 @@ Chunk pai (calculado):
 
 - **Delimiter:** uma sequência que não aparece em nenhuma seção depois da
   limpeza, para que cada seção vire um único pai e o passo fique junto das
-  suas imagens. Primeiro candidato: `\n\n\n`, que nunca sobra porque a limpeza
-  troca 3 ou mais quebras por 2. Se aparecer (por exemplo, dentro de um bloco
-  de código), o app tenta os próximos candidatos de uma lista fixa.
+  suas imagens: `\n\n\n`, que nunca sobra porque a limpeza "Replace
+  consecutive spaces" troca 3 ou mais quebras por 2 em todo o texto, inclusive
+  em blocos de código.
 - **Maximum chunk length:** o tamanho da maior seção, arredondado para cima ao
   múltiplo de 100, com mínimo de 500 e teto em
   `INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH`.
@@ -238,7 +246,8 @@ Busca (configuração da base, igual para todos os manuais dela):
 
 Avisos extras da análise:
 
-- texto entre `<` e `>` fora de bloco de código (o Dify apaga esse texto);
+- texto entre `<` e `>` no corpo das seções, inclusive em blocos de código (o
+  Dify apaga esse texto);
 - `#` dentro de títulos (ex.: "C#"), que o Dify também apaga;
 - se a base já tiver documentos em modo General, o Pai-filho não poderá ser
   usado nela (o tipo de chunk é fixo por base).
@@ -286,7 +295,12 @@ Exemplo com o `manual-office365-rag` (convertido):
 - `docker/docker-stack.yml`: serviço `kb_admin`, volume `dify_kb_admin_data` e
   placement constraint no `kb_assets`.
 - `docker/kb_assets/default.conf`: cabeçalho `Content-Security-Policy: sandbox`.
-- `docker/deploy.sh`: construir a imagem `dify-kb-admin:local` antes do deploy.
+- `docker/deploy.sh`: construir a imagem `dify-kb-admin:local` antes do deploy
+  e marcá-la também com uma tag derivada do ID da imagem
+  (`dify-kb-admin:<12 caracteres do ID>`), exportada em `KB_ADMIN_IMAGE` para a
+  stack. Sem a tag nova, o Swarm não atualizaria o serviço quando o código
+  mudasse, porque a especificação do serviço continuaria igual. O
+  `docker-compose.yaml` não ganha o serviço (o kb_admin é só do Swarm).
 - `docker/kb_assets/README.md` (ou novo `docker/kb_admin/README.md`): uso da
   interface e configuração da custom location `/kb-admin/` no NGPM. A seção
   "Base de conhecimento no Dify" deixa de recomendar o delimitador `\n#` e

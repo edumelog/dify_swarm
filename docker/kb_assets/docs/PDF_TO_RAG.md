@@ -313,8 +313,9 @@ cada seção chegue inteira ao chatbot, com as suas imagens.
    necessário, e não use células como "idem" ou "o mesmo acima". Tabelas com
    mais de 3.000 caracteres devem ser divididas em seções com subtítulos.
 6. **Texto entre `<` e `>`:** o Dify apaga tudo o que estiver entre `<` e `>`
-   fora de blocos de código. Não use HTML nem marcações como `<Enter>` ou
-   `<nome-do-usuário>`; escreva **Enter** ou `nome-do-usuário` (entre crases).
+   numa mesma linha, inclusive dentro de blocos de código. Não use HTML nem
+   marcações como `<Enter>` ou `<nome-do-usuário>`; escreva **Enter** ou
+   `nome-do-usuário` (entre crases, sem os sinais de menor e maior).
 7. **Imagens:** use somente a forma `![descrição](images/arquivo.png)`, sem
    `<img>` e sem o estilo de referência (`![descrição][id]`). A descrição também
    é usada na busca, então descreva o que a imagem mostra (ex.: "Tela de
@@ -369,7 +370,7 @@ Antes de concluir:
 9. verifique se não há referências quebradas;
 10. verifique se as seções permanecem semanticamente compreensíveis quando recuperadas isoladamente;
 11. verifique se nenhuma seção passa de 3.000 caracteres e nenhuma linha passa de 1.000 caracteres;
-12. verifique se não há texto entre `<` e `>` fora de blocos de código;
+12. verifique se não há texto entre `<` e `>` em nenhum lugar, nem em blocos de código;
 13. verifique se a pasta, o `.md` e o `.zip` têm o mesmo nome, só com letras minúsculas, números e hífen.
 
 ## Entrega
