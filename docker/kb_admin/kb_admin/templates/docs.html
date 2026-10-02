@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Documentos de apoio{% endblock %}
+{% block content %}
+{% if message %}<div class="msg ok">{{ message }}</div>{% endif %}
+<h1>Documentos de apoio</h1>
+<p>Prompts de conversão, manuais de uso e outros arquivos de referência para quem prepara a base de conhecimento.</p>
+{% if user.can_manage %}<p><a class="button" href="{{ prefix }}/docs/new">Enviar documento</a></p>{% endif %}
+{% if documents %}
+<table>
+  <thead><tr><th>Arquivo</th><th>Descrição</th><th>Tamanho</th><th>Atualizado em</th><th>Por</th><th>Ações</th></tr></thead>
+  <tbody>
+  {% for doc in documents %}
+    <tr>
+      <td><a href="{{ prefix }}/docs/{{ doc.id }}/download">{{ doc.filename }}</a></td>
+      <td>{{ doc.description }}</td>
+      <td>{{ doc.size | human_size }}</td>
+      <td>{{ doc.updated_at | local_datetime }}</td>
+      <td>{{ doc.updated_by }}</td>
+      <td><div class="actions">
+        <a class="button secondary" href="{{ prefix }}/docs/{{ doc.id }}/download">Baixar</a>
+        {% if user.can_manage %}
+        <a class="button secondary" href="{{ prefix }}/docs/{{ doc.id }}/replace">Substituir</a>
+        <a class="button secondary" href="{{ prefix }}/docs/{{ doc.id }}/edit">Editar descrição</a>
+        <a class="button danger" href="{{ prefix }}/docs/{{ doc.id }}/delete">Apagar</a>
+        {% endif %}
+      </div></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Nenhum documento ainda.</p>
+{% endif %}
+{% endblock %}

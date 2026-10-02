@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from kb_admin.auth import DifyAuthClient
 from kb_admin.config import load_settings
+from kb_admin.docs_store import DocumentStore
 from kb_admin.storage import ManualStore
 from kb_admin.web import create_app
 
@@ -19,4 +20,7 @@ def build_app() -> FastAPI:
     store = ManualStore(settings.assets_dir, settings.data_dir)
     store.ensure_dirs()
     store.cleanup_temporary()
-    return create_app(settings, store, DifyAuthClient(settings.dify_api_url))
+    docs = DocumentStore(settings.data_dir / "docs")
+    docs.ensure_dirs()
+    docs.cleanup_temporary()
+    return create_app(settings, store, docs, DifyAuthClient(settings.dify_api_url))

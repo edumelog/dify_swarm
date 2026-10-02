@@ -12,6 +12,9 @@
            display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
   header a { color: var(--fg); text-decoration: none; }
   header .env, small { color: var(--muted); }
+  .tabs { display: flex; gap: 4px; }
+  .tabs a { padding: 6px 10px; border-radius: 6px; color: var(--muted); }
+  .tabs a.active { background: #eff2f5; color: var(--fg); font-weight: 600; }
   header form { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
   table { width: 100%; border-collapse: collapse; background: #fff; }
@@ -35,6 +38,12 @@
 <body>
 <header>
   <a href="{{ prefix }}/"><strong>Manuais da base de conhecimento</strong></a>
+  {% if user %}
+  <nav class="tabs">
+    <a href="{{ prefix }}/"{% if nav != "docs" %} class="active"{% endif %}>Manuais</a>
+    <a href="{{ prefix }}/docs"{% if nav == "docs" %} class="active"{% endif %}>Documentos de apoio</a>
+  </nav>
+  {% endif %}
   <span class="env">Imagens publicadas em <code>{{ assets_base_url }}/</code></span>
   {% if user %}
   <form method="post" action="{{ prefix }}/logout">

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from kb_admin.config import Settings
+from kb_admin.docs_store import DocumentStore
 from kb_admin.errors import AuthError
 from kb_admin.storage import ManualStore
 from kb_admin.web import create_app
@@ -51,9 +52,17 @@ def store(settings: Settings) -> ManualStore:
 
 
 @pytest.fixture
-def client(settings: Settings, store: ManualStore) -> TestClient:
+def docs(settings: Settings) -> DocumentStore:
+    """Biblioteca de documentos em pasta temporária. Saída: DocumentStore."""
+    document_store = DocumentStore(settings.data_dir / "docs")
+    document_store.ensure_dirs()
+    return document_store
+
+
+@pytest.fixture
+def client(settings: Settings, store: ManualStore, docs: DocumentStore) -> TestClient:
     """Cliente HTTP sem login. Saída: TestClient."""
-    return TestClient(create_app(settings, store, FakeAuthClient()))
+    return TestClient(create_app(settings, store, docs, FakeAuthClient()))
 
 
 @pytest.fixture
@@ -74,9 +83,9 @@ def csrf(client: TestClient) -> str:
 
 
 @pytest.fixture
-def editor_client(settings: Settings, store: ManualStore) -> TestClient:
+def editor_client(settings: Settings, store: ManualStore, docs: DocumentStore) -> TestClient:
     """Cliente logado como editor (somente leitura). Saída: TestClient."""
-    client = TestClient(create_app(settings, store, FakeAuthClient()))
+    client = TestClient(create_app(settings, store, docs, FakeAuthClient()))
     response = client.post(
         "/kb-admin/login", data={"email": "edu@camara.rj", "password": PASSWORD}, follow_redirects=False
     )

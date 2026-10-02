@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Documentos de apoio{% endblock %}
+{% block content %}
+<h1>{% if mode == "new" %}Enviar documento{% elif mode == "replace" %}Substituir {{ document.filename }}{% else %}Editar descrição de {{ document.filename }}{% endif %}</h1>
+{% if error %}<div class="msg error">{{ error }}</div>{% endif %}
+<div class="box">
+  <form method="post" action="{{ action }}"{% if mode != "edit" %} enctype="multipart/form-data"{% endif %}>
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    {% if mode != "edit" %}
+    <p><label>Arquivo (qualquer tipo, até 50 MB)<br><input type="file" name="file" required></label></p>
+    {% endif %}
+    {% if mode == "replace" %}
+    <p>A descrição é mantida: {{ document.description }}</p>
+    {% else %}
+    <p><label>Descrição (para que serve)<br><input type="text" name="description" value="{{ description }}" maxlength="500" required style="width: 100%;"></label></p>
+    {% endif %}
+    <div class="actions">
+      <button type="submit">Salvar</button>
+      <a class="button secondary" href="{{ prefix }}/docs">Cancelar</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

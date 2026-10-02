@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Documentos de apoio{% endblock %}
+{% block content %}
+<h1>Apagar {{ document.filename }}?</h1>
+<div class="msg warn">O arquivo e a descrição serão apagados. Essa ação não pode ser desfeita.</div>
+<div class="actions">
+  <form method="post" action="{{ prefix }}/docs/{{ document.id }}/delete">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <button type="submit" class="danger">Apagar</button>
+  </form>
+  <a class="button secondary" href="{{ prefix }}/docs">Cancelar</a>
+</div>
+{% endblock %}
