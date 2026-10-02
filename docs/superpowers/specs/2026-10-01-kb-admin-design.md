@@ -225,7 +225,7 @@ lugares.
 Busca (configuração da base, igual para todos os manuais dela):
 
 - **Hybrid Search** com **Rerank Model** ligado, usando o modelo previsto
-  `jina-reranker-v3.5` (substituto direto do v3, melhor em multilíngue e em tabelas; o plugin da Jina no Dify precisa oferecer esse modelo). Se a base não tiver modelo de rerank, a alternativa é
+  `jina-reranker-v3` (o oferecido hoje pelo plugin da Jina no Dify; o v3.5 é substituto direto, bastando trocar o modelo quando o plugin o oferecer). Se a base não tiver modelo de rerank, a alternativa é
   Weighted Score 0.7 semântico / 0.3 palavra-chave (o padrão do Dify). Os
   nomes dos modelos ficam em variáveis (`KB_EMBEDDING_MODEL_LABEL` e
   `KB_RERANK_MODEL_LABEL`) e servem só para o texto exibido.
