@@ -13,8 +13,13 @@ WhatsApp ou chat de site).
 - O serviço `dify_kb_assets` (stack `dify`) serve as imagens em
   `<protocolo>://<domínio-do-dify>/kb-assets/<slug>/<arquivo>` (por exemplo,
   `http://dify.dev.dti/kb-assets/office365/tela.png`). Essas URLs não expiram.
-- O script `publish.sh` copia as imagens para o serviço e gera uma versão do
-  `.md` com URLs absolutas, gravada em `<pasta-do-manual>/build/<nome>.dify.md`
+- A publicação é feita pela interface web `kb_admin`
+  (`<protocolo>://<domínio-do-dify>/kb-admin/`, ver `docker/kb_admin/README.md`):
+  envie o `.zip` do manual e baixe de lá o `.md` com URLs absolutas e os parâmetros
+  recomendados para o ingest.
+- Alternativa pela linha de comando: o script `publish.sh` copia as imagens para
+  o serviço e gera uma versão do `.md` com URLs absolutas, gravada em
+  `<pasta-do-manual>/build/<nome>.dify.md`
   (por exemplo, `kb/manual-office365-rag/build/manual-office365-rag.dify.md`),
   que é o arquivo enviado ao Dify. Só as imagens referenciadas no `.md` são
   publicadas.
@@ -52,6 +57,9 @@ O script recusa (e lista todos os problemas antes de publicar qualquer coisa):
 - nome de imagem inválido ou arquivo referenciado que não existe em `images/`.
 
 ## Publicar ou atualizar um manual
+
+O caminho recomendado é a interface `kb_admin`. Os passos abaixo descrevem a
+alternativa pela linha de comando.
 
 1. Edite o `.md` e as imagens da pasta do manual.
 2. Rode, na raiz do repositório:
@@ -120,16 +128,14 @@ location ^~ /kb-assets/ {
 
 ### Base de conhecimento no Dify
 
-- Envie o `<pasta>/build/<nome>.dify.md` (nunca o `.md` original).
-- Modo de segmentação **Pai-filho**:
-  - Parent-chunk: **Paragraph**, Delimiter `\n#`, Maximum chunk length `3000`;
-  - Child-chunk: Delimiter `\n\n`, Maximum chunk length `512`;
-  - "Replace consecutive spaces, newlines and tabs": marcado;
-  - "Delete all URLs and email addresses": desmarcado;
-  - Summary Auto-Gen: desligado.
-
-O limite é em caracteres (o teto de 4000 vem do `.env`). O delimitador `\n#`
-separa por qualquer título, mantendo cada passo junto das suas imagens.
+- Envie o `.md` baixado na interface `kb_admin` (ou o `build/<nome>.dify.md` do
+  `publish.sh`), nunca o `.md` original.
+- Use os parâmetros mostrados na tela do manual no `kb_admin`. Eles são calculados a
+  partir do próprio `.md`: modo Parent-child, delimitador do pai `\n\n\n` (cada seção
+  vira um pai inteiro, com as suas imagens), tamanhos conforme a maior seção e o
+  maior parágrafo ou linha, Hybrid Search com rerank e Top K sugerido.
+- Não use `\n#` como delimitador: o Dify separa o `.md` pelos títulos e apaga os `#`
+  antes do chunking, então esse delimitador nunca encontra os títulos.
 
 ### Chatflow
 
