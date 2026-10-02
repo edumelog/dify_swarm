@@ -126,3 +126,11 @@ def test_html_comments_do_not_warn() -> None:
 def test_cleaning_keeps_latin1_letters() -> None:
     """A limpeza do Dify 1.17.1 em execução não remove ï, ¿ nem ¾ (o código-fonte do repositório removia)."""
     assert extract_sections("## A\n\nÍndice ï ¿ ¾\n")[0].text == "\n\nA\nÍndice ï ¿ ¾"
+
+
+def test_delimiter_rows_warn_about_uppercase() -> None:
+    """As linhas de delimitador avisam que \\N (maiúsculo) quebra o processamento no Dify."""
+    rows = parameter_rows(recommend(TABLE_MD, 1000, 4000), "e", "r")
+    reasons = [row.reason for row in rows if row.name == "Delimiter"]
+    assert len(reasons) == 2
+    assert all("minúsculas" in reason and "\\N" in reason for reason in reasons)

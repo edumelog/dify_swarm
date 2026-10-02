@@ -487,6 +487,11 @@ os `#` antes do chunking; tamanhos são contados em caracteres) e recomenda:
 | Top K | filhos por seção (mediana) × 3, entre 3 e 10; numa base com vários manuais, use o maior |
 | Score Threshold | desligado (ajuste testando em "Retrieval Testing") |
 
+**Delimitadores em minúsculas:** digite `\n`, nunca `\N`. O Dify lê o delimitador com
+`unicode_escape`, em que `\N` maiúsculo é outra sequência, e o documento falha com
+`'unicodeescape' codec can't decode bytes ...: malformed \N character escape`. Use o botão
+**Copiar** da tabela do `kb_admin` em vez de digitar.
+
 Não use `\n#` como delimitador: os `#` já foram apagados quando o splitter roda. O tipo de chunk
 fica fixo na base depois do primeiro documento, então uma base com documentos em modo General não
 aceita Parent-child.
@@ -626,6 +631,7 @@ Nunca use `http://127.0.0.1:8080` nesse campo.
 | 502 no Dify com `connect() failed (111)` no log do `nginx` | colisão de nomes curtos com outra stack em `net_nginx_pm` | A stack já usa nomes completos (`<stack>_api` etc.); confira se o template do Swarm está em uso |
 | Login no `kb_admin`: "Não foi possível falar com o Dify" | API fora do ar ou incompatível | `docker service logs dify_kb_admin` mostra a chamada que falhou |
 | `kb_admin`: "Seu papel no Dify (editor) permite só consulta." | perfil editor | Peça a um owner ou admin |
+| Documento no Dify com erro `malformed \N character escape` | delimitador digitado com `\N` maiúsculo | Corrigir para `\n` minúsculo nas configurações de chunk (seção 8) |
 | Deploy falha com `only updates to Labels are allowed` | config do Swarm alterado | Remover a stack e fazer o deploy de novo (seção 10) |
 
 Sobre a colisão de nomes: no Swarm, o nome curto de um serviço (ex.: `api`) vira alias DNS em

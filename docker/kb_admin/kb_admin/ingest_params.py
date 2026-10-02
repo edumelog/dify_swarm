@@ -36,6 +36,8 @@ TOP_K_MIN = 3
 TOP_K_MAX = 10
 START_TITLE = "(início do documento)"
 EXCERPT_LENGTH = 80
+# O Dify lê o delimitador com unicode_escape: \N maiúsculo vira erro "malformed \N character escape".
+DELIMITER_CASE_WARNING = " Digite \\n em minúsculas (use o botão Copiar): \\N maiúsculo quebra o processamento no Dify."
 
 
 @dataclass(frozen=True)
@@ -254,9 +256,10 @@ def parameter_rows(
         ParameterRow("Parent-chunk", "Tipo", "Paragraph",
                      "Full-doc mandaria o manual inteiro como contexto e pularia a limpeza do texto."),
         ParameterRow("Parent-chunk", "Delimiter", display_delimiter(rec.parent_delimiter),
-                     "Não aparece no texto limpo: cada seção vira um único pai, com o passo junto das suas imagens."),
+                     "Não aparece no texto limpo: cada seção vira um único pai, com o passo junto das suas imagens."
+                     + DELIMITER_CASE_WARNING),
         ParameterRow("Parent-chunk", "Maximum chunk length", str(rec.parent_max_length), largest),
-        ParameterRow("Child-chunk", "Delimiter", display_delimiter(rec.child_delimiter), child_reason),
+        ParameterRow("Child-chunk", "Delimiter", display_delimiter(rec.child_delimiter), child_reason + DELIMITER_CASE_WARNING),
         ParameterRow("Child-chunk", "Maximum chunk length", str(rec.child_max_length),
                      f"Maior pedaço: {_format_int(rec.longest_child_piece)} caracteres."),
         ParameterRow("Text Pre-processing Rules", "Replace consecutive spaces, newlines and tabs", "Marcado",
