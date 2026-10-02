@@ -69,6 +69,20 @@ O laço exporta cada linha `CHAVE=valor` literalmente, sem executá-la. **Não u
 
 Repita este passo em todo novo shell antes de um deploy.
 
+A stack também exige duas variáveis que não ficam no `.env`, porque dependem do código
+deste repositório: `KB_ADMIN_IMAGE` (imagem local do `kb_admin`, com uma tag derivada do
+ID da imagem) e `KB_ASSETS_CONF_HASH` (hash do `kb_assets/default.conf`, usado no nome do
+config). O `deploy.sh` faz isso sozinho; no deploy manual, rode antes:
+
+```bash
+docker build -q -t dify-kb-admin:local kb_admin
+export KB_ADMIN_IMAGE="dify-kb-admin:$(docker image inspect -f '{{.Id}}' dify-kb-admin:local | cut -c8-19)"
+docker tag dify-kb-admin:local "${KB_ADMIN_IMAGE}"
+export KB_ASSETS_CONF_HASH="$(sha256sum kb_assets/default.conf | cut -c1-12)"
+```
+
+Sem elas, o `docker stack deploy` para com `defina KB_ADMIN_IMAGE rodando o docker/deploy.sh`.
+
 ## 4) Validar o manifesto
 
 ```bash
@@ -254,10 +268,11 @@ docker exec $W node -e 'fetch(process.env.CONSOLE_API_URL + "/console/api/system
 
 ## 9) Operações do dia a dia
 
-- Aplicar mudanças no stack ou no `.env`:
+- Aplicar mudanças no stack, no `.env` ou no código do `kb_admin` (recomendado: `./deploy.sh --swarm`). Na forma manual, exporte também `KB_ADMIN_IMAGE` e `KB_ASSETS_CONF_HASH` (seção 3):
 
 ```bash
 while IFS= read -r line; do [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && export "$line"; done < .env
+# + os comandos da seção 3 para KB_ADMIN_IMAGE e KB_ASSETS_CONF_HASH
 docker stack deploy -c docker-stack.yml dify
 ```
 
@@ -287,14 +302,15 @@ STACK_NAME=difytest ./remove.sh # outra stack
 
   O script não mexe no `.env`, nos certificados nem na rede `net_nginx_pm`. Os testes ficam em `./test_remove.sh`, com `docker` simulado.
 
-- Alterações em arquivos de `nginx/` ou `ssrf_proxy/`: os `configs` do Swarm são imutáveis, então um redeploy com conteúdo alterado falha. Remova a stack, aguarde a remoção terminar e faça o deploy de novo:
+- Alterações em arquivos de `nginx/` ou `ssrf_proxy/`: os `configs` do Swarm são imutáveis, então um redeploy com conteúdo alterado falha. Remova a stack, aguarde a remoção terminar e faça o deploy de novo com `./deploy.sh --swarm`. A exceção é o `kb_assets/default.conf`: o nome do config dele leva o hash do arquivo, então basta fazer o deploy de novo.
 
 ```bash
 docker stack rm dify
 # aguarde até `docker stack ls` não listar mais "dify"
-while IFS= read -r line; do [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && export "$line"; done < .env
-docker stack deploy -c docker-stack.yml dify
+./deploy.sh --swarm
 ```
+
+  Depois de recriar a stack, os serviços ganham IPs novos e o NGPM pode responder 502 em `/kb-assets/` e `/kb-admin/`; recarregue o nginx dele com `docker exec $(docker ps -q -f name=ngpm_ngpm) nginx -s reload`.
 
 ## 10) Imagens da base de conhecimento (kb_assets)
 
@@ -302,18 +318,15 @@ O serviço `dify_kb_assets` (nginx) serve as imagens dos manuais da base de conh
 
 Ordem de uso:
 
-1. Prepare o manual em `kb/<manual>/` (um `.md` e a pasta `images/`). Para gerá-lo a partir de um PDF, use o prompt [`kb_assets/docs/PDF_TO_RAG.md`](kb_assets/docs/PDF_TO_RAG.md).
-2. Faça o deploy da stack (seção 5), que já inclui o serviço `dify_kb_assets`.
-3. No NGPM, crie a custom location `/kb-assets/` do proxy host do Dify apontando para `dify_kb_assets:80`.
-4. Publique o manual, respondendo às perguntas de domínio e protocolo:
+1. Gere o pacote do manual (`<nome>.zip` com a pasta `<nome>/`, o `<nome>.md` e `images/`) a partir do PDF com o prompt [`kb_assets/docs/PDF_TO_RAG.md`](kb_assets/docs/PDF_TO_RAG.md).
+2. Faça o deploy da stack (seção 5), que já inclui os serviços `dify_kb_assets` e `dify_kb_admin`.
+3. No NGPM, crie no proxy host do Dify as custom locations `/kb-assets/` → `dify_kb_assets:80` e `/kb-admin/` → `dify_kb_admin:8000`.
+4. Abra `<protocolo>://<domínio-do-dify>/kb-admin/`, entre com o usuário do Dify (owner, admin ou editor) e envie o zip.
+5. Na tela do manual, baixe o `.md` para o Dify e use os parâmetros de ingest mostrados ao criar o documento no Dify.
 
-```bash
-docker/kb_assets/publish.sh kb/<manual> <slug>
-```
+A alternativa pela linha de comando continua disponível: `docker/kb_assets/publish.sh kb/<manual> <slug>`.
 
-5. Envie ao Dify o arquivo gerado `kb/<manual>/build/<nome>.dify.md`.
-
-Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.md`](kb_assets/README.md).
+Interface web: [`kb_admin/README.md`](kb_admin/README.md). Detalhes (formato do manual, segmentação, prompt do LLM): [`kb_assets/README.md`](kb_assets/README.md).
 
 ## Colisão de nomes na rede compartilhada (502 Bad Gateway)
 
