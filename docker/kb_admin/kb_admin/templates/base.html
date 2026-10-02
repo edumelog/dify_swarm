@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Manuais da base de conhecimento{% endblock %}</title>
+<style>
+  :root { --bg: #f6f7f9; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --accent: #1f6feb;
+          --danger: #cf222e; --warn-bg: #fff8c5; --err-bg: #ffebe9; --ok-bg: #dafbe1; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 16px;
+           display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  header a { color: var(--fg); text-decoration: none; }
+  header .env, small { color: var(--muted); }
+  header form { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .box { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .msg { padding: 12px 16px; border-radius: 6px; margin: 12px 0; }
+  .msg.error { background: var(--err-bg); } .msg.warn { background: var(--warn-bg); } .msg.ok { background: var(--ok-bg); }
+  button, .button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px;
+                    cursor: pointer; text-decoration: none; display: inline-block; font-size: 1em; }
+  .danger { background: var(--danger); }
+  .secondary { background: #fff; color: var(--fg); border: 1px solid var(--line); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  code { background: #eff2f5; padding: 1px 4px; border-radius: 4px; }
+  .changed { background: var(--warn-bg); }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .gallery figure { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .gallery img { width: 100%; height: auto; }
+  .gallery figcaption { font-size: .8em; color: var(--muted); word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <a href="{{ prefix }}/"><strong>Manuais da base de conhecimento</strong></a>
+  <span class="env">Imagens publicadas em <code>{{ assets_base_url }}/</code></span>
+  {% if user %}
+  <form method="post" action="{{ prefix }}/logout">
+    <span class="env">{{ user.email }}</span>
+    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+    <button class="secondary" type="submit">Sair</button>
+  </form>
+  {% endif %}
+</header>
+<main>{% block content %}{% endblock %}</main>
+<script>
+  // Copia o valor do botão; sem https, navigator.clipboard não existe e usa-se o método antigo.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) { return navigator.clipboard.writeText(text); }
+    var area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+    return Promise.resolve();
+  }
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-copy]");
+    if (!button) { return; }
+    copyText(button.dataset.copy).then(function () {
+      button.textContent = "Copiado";
+      setTimeout(function () { button.textContent = "Copiar"; }, 1500);
+    });
+  });
+</script>
+</body>
+</html>

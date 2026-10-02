@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+{% if deleted %}
+<div class="msg ok">Manual <code>{{ deleted }}</code> apagado. Lembre-se de apagar o documento correspondente na base de conhecimento do Dify.</div>
+{% endif %}
+<h1>Manuais publicados</h1>
+<p><a class="button" href="{{ prefix }}/upload">Enviar manual</a></p>
+{% if manuals %}
+<table>
+  <thead><tr><th>Manual</th><th>Imagens</th><th>Última publicação</th><th>Publicado por</th></tr></thead>
+  <tbody>
+  {% for manual in manuals %}
+    <tr>
+      <td><a href="{{ prefix }}/manuals/{{ manual.slug }}">{{ manual.slug }}</a>
+        {% if manual.legacy %}<br><small>publicado fora da interface (sem .md)</small>{% endif %}</td>
+      <td>{{ manual.image_count }}</td>
+      <td>{{ manual.published_at | local_datetime }}</td>
+      <td>{{ manual.published_by or "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Nenhum manual publicado ainda.</p>
+{% endif %}
+{% endblock %}

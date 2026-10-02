@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Entrar — Manuais da base de conhecimento{% endblock %}
+{% block content %}
+<div class="box" style="max-width: 420px; margin: 40px auto;">
+  <h1>Entrar</h1>
+  <p>Use o mesmo e-mail e senha do Dify.</p>
+  {% if error %}<div class="msg error">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ prefix }}/login">
+    <p><label>E-mail<br><input type="email" name="email" value="{{ email }}" required autofocus style="width: 100%;"></label></p>
+    <p><label>Senha<br><input type="password" name="password" required style="width: 100%;"></label></p>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+{% endblock %}
