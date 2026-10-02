@@ -12,6 +12,8 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from kb_admin.errors import AuthError
 
 ALLOWED_ROLES = frozenset({"owner", "admin", "editor"})
+# Só estes papéis alteram manuais e documentos; o editor apenas consulta.
+MANAGER_ROLES = frozenset({"owner", "admin"})
 LOGIN_PATH = "/console/api/login"
 # Na imagem langgenius/dify-api:1.17.1 o papel vem de GET .../summary (o POST /workspaces/current não existe).
 WORKSPACE_PATH = "/console/api/workspaces/current/summary"
@@ -34,6 +36,11 @@ class UserSession:
     email: str
     role: str
     csrf_token: str
+
+    @property
+    def can_manage(self) -> bool:
+        """Diz se o papel pode alterar manuais e documentos. Entrada: nenhuma. Saída: bool."""
+        return self.role in MANAGER_ROLES
 
 
 def new_session(email: str, role: str) -> UserSession:

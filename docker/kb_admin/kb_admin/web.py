@@ -14,7 +14,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from kb_admin.auth import SessionCodec, UserSession, new_session
 from kb_admin.config import SESSION_MAX_AGE_SECONDS, Settings
-from kb_admin.errors import AuthError, KbAdminError, ManualNotFoundError, PackageError
+from kb_admin.errors import AuthError, KbAdminError, ManualNotFoundError, NotFoundError, PackageError
 from kb_admin.ingest_params import IngestRecommendation, ParameterRow, parameter_rows, recommend
 from kb_admin.markdown_rules import rewrite_image_urls
 from kb_admin.package import SLUG_PATTERN, UPLOADED_ZIP, ManualPackage, read_package, save_upload
@@ -41,6 +41,15 @@ class LoginRequiredError(Exception):
 
 class CsrfError(Exception):
     """Formulário sem o token CSRF da sessão."""
+
+
+class ForbiddenError(Exception):
+    """O papel do usuário só permite consulta."""
+
+    def __init__(self, role: str) -> None:
+        """Guarda o papel. Entrada: papel no Dify. Saída: nenhuma."""
+        super().__init__(role)
+        self.role = role
 
 
 def format_local_datetime(value: datetime | None) -> str:
@@ -80,6 +89,18 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
         if not secrets.compare_digest(user.csrf_token.encode(), token.encode()):
             raise CsrfError()
 
+    def require_manager(user: UserSession) -> None:
+        """Bloqueia alterações para quem só consulta. Entrada: sessão. Saída: nenhuma; ForbiddenError se for editor."""
+        if not user.can_manage:
+            raise ForbiddenError(user.role)
+
+    @app.exception_handler(ForbiddenError)
+    async def handle_forbidden(request: Request, exc: ForbiddenError) -> Response:
+        """Recusa alteração de quem só consulta. Entrada: requisição e erro. Saída: página de erro 403."""
+        user = codec.load(request.cookies.get(SESSION_COOKIE))
+        message = f"Seu papel no Dify ({exc.role}) permite só consulta."
+        return render(request, "error.html", {"message": message, "user": user}, 403)
+
     @app.exception_handler(LoginRequiredError)
     async def handle_login_required(request: Request, exc: LoginRequiredError) -> Response:
         """Manda para o login. Entrada: requisição e erro. Saída: redirecionamento 303."""
@@ -94,7 +115,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     @app.exception_handler(KbAdminError)
     async def handle_domain_error(request: Request, exc: KbAdminError) -> Response:
         """Mostra erros de domínio. Entrada: requisição e erro. Saída: página de erro 404 ou 400."""
-        status = 404 if isinstance(exc, ManualNotFoundError) else 400
+        status = 404 if isinstance(exc, NotFoundError) else 400
         user = codec.load(request.cookies.get(SESSION_COOKIE))
         return render(request, "error.html", {"message": exc.message, "user": user}, status)
 
@@ -193,6 +214,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     @app.get(f"{PREFIX}/upload", response_class=HTMLResponse)
     def upload_form(request: Request, user: User, slug: str | None = None) -> Response:
         """Tela de envio. Entrada: sessão e slug a substituir (opcional). Saída: formulário."""
+        require_manager(user)
         target = slug if slug and SLUG_PATTERN.match(slug) else None
         return render(request, "upload.html", {"user": user, "slug": target, "problems": [], "error": None})
 
@@ -200,6 +222,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     def upload(request: Request, user: User, csrf_token: CsrfField, file: Annotated[UploadFile, File()]) -> Response:
         """Recebe o zip. Entrada: sessão, CSRF e arquivo. Saída: manual publicado, confirmação ou lista de problemas."""
         check_csrf(user, csrf_token)
+        require_manager(user)
         token, staging = store.new_staging()
         try:
             zip_path = staging / UPLOADED_ZIP
@@ -226,6 +249,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     def confirm_upload(token: str, user: User, csrf_token: CsrfField) -> Response:
         """Publica a substituição. Entrada: token, sessão e CSRF. Saída: redirecionamento à tela do manual."""
         check_csrf(user, csrf_token)
+        require_manager(user)
         package = store.load_pending(token, user.email)
         store.publish(package, user.email)
         store.discard(token)
@@ -235,6 +259,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     def cancel_upload(token: str, user: User, csrf_token: CsrfField) -> Response:
         """Descarta a substituição. Entrada: token, sessão e CSRF. Saída: redirecionamento à lista."""
         check_csrf(user, csrf_token)
+        require_manager(user)
         store.discard(token)
         return RedirectResponse(f"{PREFIX}/", status_code=303)
 
@@ -273,6 +298,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     @app.get(f"{PREFIX}/manuals/{{slug}}/delete", response_class=HTMLResponse)
     def delete_form(request: Request, slug: str, user: User) -> Response:
         """Confirmação de exclusão. Entrada: slug e sessão. Saída: página de confirmação."""
+        require_manager(user)
         if not store.exists(slug):
             raise ManualNotFoundError(f"Manual “{slug}” não encontrado.")
         return render(request, "delete.html", {"user": user, "slug": slug, "legacy": store.is_legacy(slug)})
@@ -281,6 +307,7 @@ def create_app(settings: Settings, store: ManualStore, auth_client: AuthClient) 
     def delete(slug: str, user: User, csrf_token: CsrfField) -> Response:
         """Apaga o manual. Entrada: slug, sessão e CSRF. Saída: redirecionamento à lista com aviso."""
         check_csrf(user, csrf_token)
+        require_manager(user)
         store.delete(slug)
         return RedirectResponse(f"{PREFIX}/?deleted={slug}", status_code=303)
 

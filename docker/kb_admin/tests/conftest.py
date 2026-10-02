@@ -14,15 +14,16 @@ PASSWORD = "s3nh@"
 
 
 class FakeAuthClient:
-    """Dify simulado: um usuário editor e um sem permissão."""
+    """Dify simulado: ana é admin, edu é editor (só consulta) e normal não tem permissão."""
 
     def authenticate(self, email: str, password: str) -> str:
         """Simula o login. Entrada: e-mail e senha. Saída: papel; AuthError se inválido."""
         if email == "normal@camara.rj":
             raise AuthError("Sem permissão para gerenciar a base de conhecimento (seu papel no Dify: normal).")
-        if email != "ana@camara.rj" or password != PASSWORD:
+        roles = {"ana@camara.rj": "admin", "edu@camara.rj": "editor"}
+        if email not in roles or password != PASSWORD:
             raise AuthError("E-mail ou senha inválidos.")
-        return "editor"
+        return roles[email]
 
 
 @pytest.fixture
@@ -70,3 +71,14 @@ def csrf(client: TestClient) -> str:
     match = re.search(r'name="csrf_token" value="([^"]+)"', client.get("/kb-admin/").text)
     assert match is not None
     return match.group(1)
+
+
+@pytest.fixture
+def editor_client(settings: Settings, store: ManualStore) -> TestClient:
+    """Cliente logado como editor (somente leitura). Saída: TestClient."""
+    client = TestClient(create_app(settings, store, FakeAuthClient()))
+    response = client.post(
+        "/kb-admin/login", data={"email": "edu@camara.rj", "password": PASSWORD}, follow_redirects=False
+    )
+    assert response.status_code == 303
+    return client

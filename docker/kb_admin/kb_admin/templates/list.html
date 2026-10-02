@@ -4,7 +4,7 @@
 <div class="msg ok">Manual <code>{{ deleted }}</code> apagado. Lembre-se de apagar o documento correspondente na base de conhecimento do Dify.</div>
 {% endif %}
 <h1>Manuais publicados</h1>
-<p><a class="button" href="{{ prefix }}/upload">Enviar manual</a></p>
+{% if user.can_manage %}<p><a class="button" href="{{ prefix }}/upload">Enviar manual</a></p>{% endif %}
 {% if manuals %}
 <table>
   <thead><tr><th>Manual</th><th>Imagens</th><th>Última publicação</th><th>Publicado por</th></tr></thead>

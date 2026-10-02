@@ -19,7 +19,11 @@ class AuthError(KbAdminError):
     """Falha de login ou falta de permissão no Dify."""
 
 
-class ManualNotFoundError(KbAdminError):
+class NotFoundError(KbAdminError):
+    """Recurso inexistente (manual ou documento)."""
+
+
+class ManualNotFoundError(NotFoundError):
     """Manual inexistente (ou slug inválido)."""
 
 

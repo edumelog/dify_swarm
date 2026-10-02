@@ -13,9 +13,11 @@
 <div class="actions">
   {% if not legacy %}
   <a class="button" href="{{ prefix }}/manuals/{{ slug }}/download">Baixar .md para o Dify</a>
-  <a class="button secondary" href="{{ prefix }}/upload?slug={{ slug }}">Substituir</a>
   {% endif %}
+  {% if user.can_manage %}
+  {% if not legacy %}<a class="button secondary" href="{{ prefix }}/upload?slug={{ slug }}">Substituir</a>{% endif %}
   <a class="button danger" href="{{ prefix }}/manuals/{{ slug }}/delete">Apagar</a>
+  {% endif %}
 </div>
 {% if not legacy %}
 <p><small>Este .md só funciona no Dify de {{ public_host }}. Envie sempre o arquivo baixado aqui, nunca o .md original do zip.</small></p>
