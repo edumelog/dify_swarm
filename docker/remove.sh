@@ -2,8 +2,10 @@
 # Remove a stack do Dify no Docker Swarm e, se o operador escolher, apaga também os volumes
 # dela (banco, storage, bases vetoriais etc.). Os volumes são achados pelo label
 # com.docker.stack.namespace=<stack>, não pelo prefixo do nome.
+# Com --compose, derruba o projeto Docker Compose (docker-compose.yaml + docker-compose.kb.yaml) e,
+# se escolhido, apaga os volumes nomeados dele; os dados do Dify em docker/volumes/ nunca são apagados.
 #
-# Uso: docker/remove.sh
+# Uso: docker/remove.sh [--swarm | --compose]
 # Variáveis: STACK_NAME (padrão: dify), REMOVE_TIMEOUT (segundos de espera pela remoção; padrão: 300),
 # REMOVE_POLL_SECONDS (intervalo entre as verificações; padrão: 3).
 # Não mexe no .env, nos certificados nem na rede compartilhada com o NGPM.
@@ -13,6 +15,8 @@ STACK_NAME="${STACK_NAME:-dify}"
 REMOVE_TIMEOUT="${REMOVE_TIMEOUT:-300}"
 REMOVE_POLL_SECONDS="${REMOVE_POLL_SECONDS:-3}"
 STACK_LABEL="com.docker.stack.namespace=${STACK_NAME}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_ARGS=(-f docker-compose.yaml -f docker-compose.kb.yaml)
 
 # fail: escreve uma mensagem de erro em stderr e encerra com código 1.
 # Entrada: $* mensagem. Saída: nenhuma (encerra o script).
@@ -24,7 +28,7 @@ fail() {
 # usage: mostra a forma de uso em stderr.
 # Entrada: nenhuma. Saída: texto de ajuda em stderr.
 usage() {
-  echo "Uso: $0   (stack: STACK_NAME=${STACK_NAME})" >&2
+  echo "Uso: $0 [--swarm | --compose]   (stack: STACK_NAME=${STACK_NAME}; padrão: --swarm)" >&2
 }
 
 # stack_exists: verifica se a stack está implantada no Swarm.
@@ -77,14 +81,15 @@ ask_delete_volumes() {
   done
 }
 
-# confirm_volume_deletion: exige que o operador digite o nome da stack antes de apagar dados.
-# Entrada: resposta no stdin. Saída: nenhuma; encerra sem remover nada se o nome não conferir.
+# confirm_volume_deletion: exige que o operador digite o nome (da stack ou do projeto) antes de apagar dados.
+# Entrada: $1 nome esperado, $2 o que ele é ("da stack" ou "do projeto"); resposta no stdin.
+# Saída: nenhuma; encerra sem remover nada se o nome não conferir.
 confirm_volume_deletion() {
-  local answer=""
+  local expected="${1:-${STACK_NAME}}" kind="${2:-da stack}" answer=""
   echo "ATENÇÃO: os volumes guardam o banco, os arquivos enviados e as bases de conhecimento; a exclusão não pode ser desfeita." >&2
-  printf 'Digite o nome da stack (%s) para confirmar a exclusão dos volumes: ' "${STACK_NAME}" >&2
+  printf 'Digite o nome %s (%s) para confirmar a exclusão dos volumes: ' "${kind}" "${expected}" >&2
   read -r answer || true
-  [[ "${answer}" == "${STACK_NAME}" ]] || fail "confirmação não confere; nada foi removido."
+  [[ "${answer}" == "${expected}" ]] || fail "confirmação não confere; nada foi removido."
 }
 
 # delete_volumes: apaga os volumes informados.
@@ -96,10 +101,61 @@ delete_volumes() {
   echo "${#} volume(s) apagado(s)." >&2
 }
 
+# compose: roda o docker compose com os arquivos do Dify e do kb, na pasta docker/.
+# Entrada: $@ subcomando e argumentos. Saída: a do docker compose.
+compose() {
+  (cd "${SCRIPT_DIR}" && docker compose "${COMPOSE_ARGS[@]}" "$@")
+}
+
+# compose_project: descobre o nome do projeto Compose (padrão: nome da pasta, ou COMPOSE_PROJECT_NAME).
+# Entrada: nenhuma. Saída: nome em stdout.
+compose_project() {
+  compose config 2>/dev/null | sed -n 's/^name: //p' | head -1
+}
+
+# remove_compose: mostra o que existe, pergunta sobre os volumes e derruba o projeto Compose.
+# Entrada: respostas no stdin. Saída: código 0 em sucesso.
+remove_compose() {
+  local project containers volumes=() delete=0
+  project="$(compose_project)"
+  [[ -n "${project}" ]] || fail "não foi possível ler o projeto Compose (docker-compose.yaml + docker-compose.kb.yaml)."
+  containers="$(compose ps -a --format '{{.Name}} {{.State}}' 2>/dev/null || true)"
+  mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=${project}")
+  if [[ -z "${containers}" && ${#volumes[@]} -eq 0 ]]; then
+    echo "Nada a remover: o projeto Compose '${project}' não tem containers nem volumes." >&2
+    exit 0
+  fi
+  if [[ -n "${containers}" ]]; then
+    echo "Containers do projeto Compose '${project}':" >&2
+    sed 's/^/  - /' <<<"${containers}" >&2
+  fi
+  if (( ${#volumes[@]} > 0 )); then
+    echo "Volumes nomeados do projeto:" >&2
+    printf '  - %s\n' "${volumes[@]}" >&2
+    if ask_delete_volumes; then
+      confirm_volume_deletion "${project}" "do projeto"
+      delete=1
+    fi
+  fi
+  if (( delete )); then
+    compose down -v >&2
+    echo "Containers removidos e volumes nomeados apagados." >&2
+  else
+    compose down >&2
+    echo "Containers removidos; volumes mantidos." >&2
+  fi
+  echo "Os dados do Dify no modo Compose ficam em docker/volumes/ (banco, Redis, Weaviate, arquivos) e não são apagados por este script." >&2
+}
+
 # main: mostra o que existe, pergunta sobre os volumes, remove a stack e, se escolhido, os volumes.
-# Entrada: $@ argumentos (nenhum aceito). Saída: código 0 em sucesso.
+# Entrada: $@ argumentos (--swarm, padrão, ou --compose). Saída: código 0 em sucesso.
 main() {
-  (( $# == 0 )) || { usage; exit 1; }
+  case "${1:-}" in
+    ""|--swarm) ;;
+    --compose) (( $# == 1 )) || { usage; exit 1; }; remove_compose; return 0 ;;
+    *) usage; exit 1 ;;
+  esac
+  (( $# <= 1 )) || { usage; exit 1; }
   local has_stack=0 delete=0 volumes=()
   stack_exists && has_stack=1
   mapfile -t volumes < <(stack_volumes)

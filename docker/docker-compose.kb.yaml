@@ -1,0 +1,46 @@
+# kb_assets e kb_admin no modo Docker Compose (sem Swarm). Use junto com o compose do Dify:
+#   docker compose -f docker-compose.yaml -f docker-compose.kb.yaml up -d --build
+# O deploy.sh --compose já faz isso. No Swarm, os mesmos serviços estão no docker-stack.yml.
+services:
+  # Serve as imagens dos manuais em /kb-assets/ (somente leitura).
+  kb_assets:
+    image: nginx:alpine
+    restart: always
+    volumes:
+      - ./kb_assets/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - kb_assets_data:/usr/share/nginx/html/kb-assets:ro
+
+  # Interface web de publicação dos manuais e documentos de apoio, em /kb-admin/.
+  kb_admin:
+    build: ./kb_admin
+    image: dify-kb-admin:local
+    restart: always
+    environment:
+      KB_ASSETS_DIR: /data/kb-assets
+      KB_ADMIN_DATA_DIR: /data/admin
+      DIFY_API_URL: http://api:5001
+      APP_WEB_URL: ${APP_WEB_URL:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+      INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH: ${INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH:-4000}
+      KB_ASSETS_BASE_URL: ${KB_ASSETS_BASE_URL:-}
+      KB_ADMIN_SECRET_KEY: ${KB_ADMIN_SECRET_KEY:-}
+      KB_CHILD_MAX_LENGTH: ${KB_CHILD_MAX_LENGTH:-}
+      KB_EMBEDDING_MODEL_LABEL: ${KB_EMBEDDING_MODEL_LABEL:-}
+      KB_RERANK_MODEL_LABEL: ${KB_RERANK_MODEL_LABEL:-}
+    volumes:
+      - kb_assets_data:/data/kb-assets
+      - kb_admin_data:/data/admin
+    depends_on:
+      - api
+
+  # O nginx do Dify ganha as rotas /kb-assets/ e /kb-admin/ (template próprio, sem editar o do Dify).
+  nginx:
+    volumes:
+      - ./nginx/compose/default.conf.template:/etc/nginx/conf.d/default.conf.template:ro
+    depends_on:
+      - kb_assets
+      - kb_admin
+
+volumes:
+  kb_assets_data:
+  kb_admin_data:

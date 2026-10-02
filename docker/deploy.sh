@@ -18,6 +18,8 @@ ENV_FILE="${ENV_FILE:-${SCRIPT_DIR}/.env}"
 ENV_EXAMPLE="${ENV_EXAMPLE:-${SCRIPT_DIR}/.env.example}"
 STACK_FILE="docker-stack.yml"
 COMPOSE_FILE="docker-compose.yaml"
+# Serviços do projeto (kb_assets e kb_admin) para o modo Compose, somados ao compose do Dify.
+COMPOSE_KB_FILE="docker-compose.kb.yaml"
 DEFAULT_PROXY_NETWORK="net_nginx_pm"
 # Pasta dos certificados públicos de CA (CERTS_DIR só é sobrescrita nos testes).
 CERTS_DIR="${CERTS_DIR:-${SCRIPT_DIR}/certs}"
@@ -496,19 +498,19 @@ deploy_swarm() {
   wait_until_ready
 }
 
-# deploy_compose: valida o docker-compose.yaml e sobe os serviços após confirmação.
-# Entrada: ENV_FILE conferido. Saída: serviços no ar, ou encerra com erro/cancelamento.
+# deploy_compose: valida o compose do Dify somado ao do kb e sobe os serviços após confirmação.
+# Entrada: ENV_FILE conferido. Saída: serviços no ar (imagem do kb_admin construída), ou encerra com erro/cancelamento.
 deploy_compose() {
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config -q \
-    || fail "o arquivo ${COMPOSE_FILE} é inválido."
-  echo "Arquivo ${COMPOSE_FILE} válido." >&2
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" -f "${COMPOSE_KB_FILE}" config -q \
+    || fail "os arquivos ${COMPOSE_FILE} e ${COMPOSE_KB_FILE} são inválidos."
+  echo "Arquivos ${COMPOSE_FILE} e ${COMPOSE_KB_FILE} válidos." >&2
   echo "Domínio: ${ENV_VALUES[CONSOLE_WEB_URL]}" >&2
   if ! ask_yes_no "Subir o Dify com Docker Compose?"; then
     echo "Subida cancelada." >&2
     return 0
   fi
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
-  echo "Serviços no ar. Acompanhe com: docker compose -f ${COMPOSE_FILE} ps" >&2
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" -f "${COMPOSE_KB_FILE}" up -d --build
+  echo "Serviços no ar. Acompanhe com: docker compose -f ${COMPOSE_FILE} -f ${COMPOSE_KB_FILE} ps" >&2
 }
 
 # main: interpreta os argumentos, confere o .env e despacha para o modo escolhido.

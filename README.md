@@ -35,6 +35,8 @@ o que é próprio do projeto; a documentação original do Dify está no
   constrói a imagem do `kb_admin`, faz o deploy e espera o Dify ficar pronto (serviços no ar e
   banco migrado).
 - **`remove.sh`**: remove a stack e, se você confirmar, apaga os volumes.
+- **Também sem Swarm**: o `deploy.sh --compose` e o `remove.sh --compose` usam o Docker Compose
+  do Dify somado ao `docker-compose.kb.yaml`, com o mesmo `kb_assets` e `kb_admin`.
 - **Imagens nas respostas do chatbot**: o serviço `kb_assets` (nginx) serve as imagens dos
   manuais em `<URL do Dify>/kb-assets/<manual>/<arquivo>`, com URLs que não expiram.
 - **Interface `kb_admin`** (`<URL do Dify>/kb-admin/`), com login pelas credenciais do Dify:
@@ -154,7 +156,7 @@ O script:
    nenhuma migração em andamento (trava `db_upgrade_lock` no Redis). O prazo é
    `DEPLOY_WAIT_TIMEOUT` (padrão: 1200 s); Ctrl+C interrompe só a espera.
 
-Sem Swarm, o script valida e sobe o `docker-compose.yaml` (o `kb_admin` existe só no Swarm).
+Sem Swarm (`--compose`), veja "Deploy sem Swarm (Docker Compose)" abaixo.
 
 ### Deploy manual
 
@@ -173,6 +175,33 @@ docker stack deploy -c docker-stack.yml dify
 
 **Não use `source .env`**: há valores com espaços sem aspas (ex.: `LOG_DATEFORMAT=%Y-%m-%d %H:%M:%S`)
 que o bash tentaria executar. Repita a exportação em todo shell novo.
+
+### Deploy sem Swarm (Docker Compose)
+
+O `kb_assets` e o `kb_admin` também rodam sem Swarm. O `docker-compose.yaml` é o original do
+Dify (gerado a partir de `docker-compose-template.yaml`) e não é editado; os serviços do projeto
+ficam em `docker/docker-compose.kb.yaml`, usado junto com ele:
+
+```bash
+./deploy.sh --compose                      # valida e sobe os dois arquivos, construindo o kb_admin
+# ou, à mão:
+docker compose -f docker-compose.yaml -f docker-compose.kb.yaml up -d --build
+```
+
+Diferenças em relação ao Swarm:
+
+- O nginx do Dify publica as portas (`EXPOSE_NGINX_PORT`, padrão 80, e `EXPOSE_NGINX_SSL_PORT`,
+  padrão 443) e já encaminha `/kb-assets/` e `/kb-admin/`: o `docker-compose.kb.yaml` troca o
+  template dele por `docker/nginx/compose/default.conf.template`, que é o do Dify mais essas duas
+  rotas. Não é preciso NGPM; se houver um proxy na frente, basta apontar o domínio para esse nginx.
+- O `kb_admin` fala com a API pelo nome curto `api` e lê as variáveis do mesmo `.env`.
+- As imagens dos manuais e os documentos ficam nos volumes nomeados `<projeto>_kb_assets_data` e
+  `<projeto>_kb_admin_data` (o projeto padrão é `docker`, o nome da pasta). Os dados do Dify ficam
+  em `docker/volumes/`, como no Compose original.
+- Não se aplicam as variáveis `DIFY_PUBLIC_HOST`, `DIFY_PUBLIC_HOST_IP`, `DIFY_EXTRA_CA_FILE`,
+  `DIFY_PROXY_NETWORK`, `KB_ADMIN_IMAGE` e `KB_ASSETS_CONF_HASH`, que são do Swarm.
+- Ao atualizar o Dify, se o `nginx/conf.d/default.conf.template` dele mudar, atualize também o
+  `nginx/compose/default.conf.template`; o `test_compose_kb.sh` acusa a diferença.
 
 ### Verificação
 
@@ -204,6 +233,18 @@ O script lista os serviços e volumes da stack (pelo label `com.docker.stack.nam
   componente".
 
 O script não mexe no `.env`, nos certificados nem na rede `net_nginx_pm`.
+
+No modo Compose:
+
+```bash
+./remove.sh --compose
+```
+
+Ele lista os containers e os volumes nomeados do projeto, faz a mesma pergunta e roda
+`docker compose ... down` (com `s` e o nome do projeto confirmado, `down -v`, que apaga os
+volumes nomeados, inclusive os do `kb_admin`). A pasta `docker/volumes/`, com os dados do Dify
+no Compose, **não é apagada** pelo script: ela também guarda arquivos de configuração
+versionados do Dify.
 
 ## 6. Nginx Proxy Manager (NGPM)
 
@@ -489,7 +530,7 @@ direto no navegador).
 ## 9. Operação do dia a dia
 
 - **Aplicar mudanças** no `.env`, no `docker-stack.yml` ou no código do `kb_admin`:
-  `./deploy.sh --swarm`.
+  `./deploy.sh --swarm` (ou `./deploy.sh --compose` no modo Compose).
 - **Reiniciar um serviço:** `docker service update --force dify_api`.
 - **Mudanças em `nginx/` ou `ssrf_proxy/`:** configs do Swarm são imutáveis, então o redeploy com
   conteúdo alterado falha. Remova a stack (`./remove.sh`, respondendo `n`), espere e faça o deploy
@@ -534,7 +575,8 @@ docker network inspect net_nginx_pm --verbose --format '{{range $k,$v := .Servic
 
 ```bash
 docker/test_deploy.sh                  # deploy.sh, com docker simulado
-docker/test_remove.sh                  # remove.sh, com docker simulado
+docker/test_remove.sh                  # remove.sh (Swarm e Compose), com docker simulado
+docker/test_compose_kb.sh              # docker-compose.kb.yaml: compose válido, template do nginx e nginx -t
 docker/kb_assets/test_default_conf.sh  # nginx do kb_assets (container nginx:alpine temporário)
 docker/kb_assets/test_publish.sh       # publish.sh
 docker/kb_admin/run_tests.sh           # kb_admin (pytest em container Python 3.12)
@@ -547,6 +589,8 @@ Os testes não dependem de nada em `kb/`.
 | Caminho | Conteúdo |
 |---|---|
 | `docker/docker-stack.yml` | Stack do Swarm |
+| `docker/docker-compose.kb.yaml` | `kb_assets` e `kb_admin` para o modo Docker Compose |
+| `docker/nginx/compose/` | Template do nginx do Dify com as rotas do kb (modo Compose) |
 | `docker/deploy.sh`, `docker/remove.sh` | Deploy e remoção (e os testes `test_*.sh`) |
 | `docker/.env.example` | Modelo do `.env` |
 | `docker/nginx/swarm/` | Template do nginx do Dify com nomes completos de serviço |

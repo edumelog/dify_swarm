@@ -28,7 +28,8 @@ check() {
 # Stub do docker. Estado em MOCK_DIR:
 #   stack_up      existe enquanto a stack não foi removida
 #   polls         quantas consultas ainda mostram restos da stack após o `stack rm`
-#   volumes       nomes dos volumes da stack, um por linha
+#   volumes       nomes dos volumes da stack (ou do projeto Compose), um por linha
+#   compose_up    existe enquanto há containers do projeto Compose
 # MOCK_BUSY_VOLUME: volume que falha no `volume rm` (em uso).
 mkdir -p "${WORK_DIR}/bin"
 cat > "${WORK_DIR}/bin/docker" <<'EOF'
@@ -43,6 +44,14 @@ leftovers() {
   echo "x"
   [[ "$1" != "service" ]] || echo $((n - 1)) > "${MOCK_DIR}/polls"
 }
+if [[ "$1" == "compose" ]]; then
+  case " $* " in
+    *" config "*) echo "name: ${MOCK_PROJECT:-docker}" ;;
+    *" ps "*) [[ -f "${MOCK_DIR}/compose_up" ]] && echo "docker-api-1 running"; true ;;
+    *" down "*) rm -f "${MOCK_DIR}/compose_up"; [[ " $* " != *" -v "* ]] || : > "${MOCK_DIR}/volumes" ;;
+  esac
+  exit 0
+fi
 case "$1 $2" in
   "stack ls") [[ -f "${MOCK_DIR}/stack_up" ]] && echo "${MOCK_STACK}"; true ;;
   "stack services") echo "${MOCK_STACK}_api 1/1"; echo "${MOCK_STACK}_web 1/1" ;;
@@ -177,6 +186,62 @@ test_custom_stack_name() {
   check "usa o label de STACK_NAME" "$(logged "label=com.docker.stack.namespace=difytest"; echo $?)"
 }
 
+# setup_compose: prepara um projeto Compose simulado.
+# Entrada: $1 "up" se há containers, $2.. volumes nomeados do projeto. Saída: MOCK_DIR preenchido.
+setup_compose() {
+  local up="$1"
+  shift
+  setup_state down "$@"
+  [[ "${up}" != "up" ]] || touch "${MOCK_DIR}/compose_up"
+}
+
+# test_compose_keep_volumes: no modo Compose, "n" derruba os containers e mantém os volumes.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_keep_volumes() {
+  setup_compose up docker_kb_assets_data docker_kb_admin_data
+  run_remove "n\n" --compose
+  check "compose: mantendo volumes termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
+  check "compose: usa o compose do Dify e o do kb" "$(logged "compose -f docker-compose.yaml -f docker-compose.kb.yaml"; echo $?)"
+  check "compose: lista os volumes do projeto" "$(grep -q "docker_kb_admin_data" <<<"${OUT}" && logged "label=com.docker.compose.project=docker"; echo $?)"
+  check "compose: derruba os containers" "$(logged "down" && ! logged "down -v"; echo $?)"
+  check "compose: não usa stack" "$(! logged "stack rm"; echo $?)"
+}
+
+# test_compose_delete_volumes: "s" e o nome do projeto derrubam tudo com -v e avisam sobre docker/volumes/.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_delete_volumes() {
+  setup_compose up docker_kb_assets_data
+  run_remove "s\ndocker\n" --compose
+  check "compose: apagando volumes termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
+  check "compose: pede o nome do projeto" "$(grep -q "Digite o nome do projeto" <<<"${OUT}"; echo $?)"
+  check "compose: apaga os volumes com down -v" "$(logged "down -v"; echo $?)"
+  check "compose: avisa que docker/volumes/ não é apagada" "$(grep -q "docker/volumes/" <<<"${OUT}"; echo $?)"
+}
+
+# test_compose_wrong_name_cancels: nome errado não derruba nada.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_wrong_name_cancels() {
+  setup_compose up docker_kb_assets_data
+  run_remove "s\nerrado\n" --compose
+  check "compose: nome errado falha sem derrubar" "$([[ ${RC} -ne 0 ]] && ! logged "down"; echo $?)"
+}
+
+# test_compose_nothing_to_remove: sem containers nem volumes, nada é feito.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_compose_nothing_to_remove() {
+  setup_compose down
+  run_remove "" --compose
+  check "compose: nada a remover termina sem erro" "$([[ ${RC} -eq 0 ]] && grep -q "Nada a remover" <<<"${OUT}" && ! logged "down"; echo $?)"
+}
+
+# test_explicit_swarm_flag: --swarm mantém o comportamento padrão.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_explicit_swarm_flag() {
+  setup_state up dify_dify_postgres_data
+  run_remove "n\n" --swarm
+  check "--swarm remove a stack" "$([[ ${RC} -eq 0 ]] && logged "docker stack rm dify"; echo $?)"
+}
+
 # test_invalid_argument: argumentos não são aceitos.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_invalid_argument() {
@@ -194,6 +259,11 @@ test_nothing_to_remove
 test_no_volumes_skips_question
 test_busy_volume_fails
 test_custom_stack_name
+test_compose_keep_volumes
+test_compose_delete_volumes
+test_compose_wrong_name_cancels
+test_compose_nothing_to_remove
+test_explicit_swarm_flag
 test_invalid_argument
 
 echo

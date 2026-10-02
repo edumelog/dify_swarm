@@ -513,8 +513,8 @@ test_compose_deploy() {
   make_env "${env}"
   run_deploy "${env}" "n\ns\n"
   check "compose termina com sucesso" "$([[ ${RC} -eq 0 ]]; echo $?)"
-  check "valida o compose" "$(grep -q "docker compose .*-f docker-compose.yaml config -q" "${MOCK_LOG}"; echo $?)"
-  check "sobe com compose up -d" "$(grep -q "docker compose .*-f docker-compose.yaml up -d" "${MOCK_LOG}"; echo $?)"
+  check "valida o compose com o kb" "$(grep -q "docker compose .*-f docker-compose.yaml -f docker-compose.kb.yaml config -q" "${MOCK_LOG}"; echo $?)"
+  check "sobe com compose up -d --build (inclui o kb)" "$(grep -q "docker compose .*-f docker-compose.yaml -f docker-compose.kb.yaml up -d --build" "${MOCK_LOG}"; echo $?)"
   check "não usa stack" "$(! grep -q "docker stack" "${MOCK_LOG}"; echo $?)"
 }
 

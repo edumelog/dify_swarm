@@ -1,0 +1,70 @@
+# Please do not directly edit this file. Instead, modify the .env variables related to NGINX configuration.
+# Versão para Docker Compose: igual ao conf.d/default.conf.template do Dify mais as rotas do kb (docker-compose.kb.yaml).
+
+server {
+    listen ${NGINX_PORT};
+    server_name ${NGINX_SERVER_NAME};
+
+    location /console/api {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /api {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /v1 {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /files {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /explore {
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location /e/ {
+      proxy_pass http://plugin_daemon:5002;
+      proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
+      include proxy.conf;
+    }
+
+    location / {
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location /mcp {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /triggers {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+    
+    # >>> kb_assets e kb_admin (imagens dos manuais e interface de publicação)
+    location /kb-assets/ {
+      proxy_pass http://kb_assets:80;
+      include proxy.conf;
+    }
+
+    location /kb-admin {
+      proxy_pass http://kb_admin:8000;
+      include proxy.conf;
+    }
+    # <<< kb_assets e kb_admin
+    # placeholder for acme challenge location
+    ${ACME_CHALLENGE_LOCATION}
+
+    # placeholder for https config defined in https.conf.template
+    ${HTTPS_CONFIG}
+}
