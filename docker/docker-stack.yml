@@ -32,6 +32,10 @@ services:
       - .env
     environment:
       MODE: api
+      # Sem servidor de e-mail neste ambiente: vazio faz o Dify avisar na tela de convite
+      # e mostrar o link de ativação, em vez de tentar o Resend padrão do .env sem chave.
+      # Para habilitar e-mail, remova esta linha e configure MAIL_TYPE/SMTP_* no .env.
+      MAIL_TYPE: ""
       SENTRY_DSN: ${API_SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${API_SENTRY_TRACES_SAMPLE_RATE:-1.0}
       SENTRY_PROFILES_SAMPLE_RATE: ${API_SENTRY_PROFILES_SAMPLE_RATE:-1.0}
@@ -68,6 +72,10 @@ services:
       - .env
     environment:
       MODE: worker
+      # Sem servidor de e-mail neste ambiente: vazio faz o Dify avisar na tela de convite
+      # e mostrar o link de ativação, em vez de tentar o Resend padrão do .env sem chave.
+      # Para habilitar e-mail, remova esta linha e configure MAIL_TYPE/SMTP_* no .env.
+      MAIL_TYPE: ""
       SENTRY_DSN: ${API_SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${API_SENTRY_TRACES_SAMPLE_RATE:-1.0}
       SENTRY_PROFILES_SAMPLE_RATE: ${API_SENTRY_PROFILES_SAMPLE_RATE:-1.0}
@@ -92,6 +100,10 @@ services:
       - .env
     environment:
       MODE: beat
+      # Sem servidor de e-mail neste ambiente: vazio faz o Dify avisar na tela de convite
+      # e mostrar o link de ativação, em vez de tentar o Resend padrão do .env sem chave.
+      # Para habilitar e-mail, remova esta linha e configure MAIL_TYPE/SMTP_* no .env.
+      MAIL_TYPE: ""
     networks:
       - default
       - ssrf_proxy_network
