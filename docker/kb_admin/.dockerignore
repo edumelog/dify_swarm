@@ -1,0 +1,5 @@
+tests
+run_tests.sh
+README.md
+**/__pycache__
+.pytest_cache
