@@ -30,6 +30,14 @@ Faça o deploy da stack antes de criar a custom location (o NGPM desativa o prox
 se não resolver o nome). Mantenha **Cache Assets** desligado, como para o
 `/kb-assets/`. Acesse em `http(s)://<domínio do Dify>/kb-admin/`.
 
+Depois de remover e recriar a stack (`docker/remove.sh` seguido do `deploy.sh`), os
+serviços ganham IPs novos e o NGPM continua usando os antigos, respondendo 502 em
+`/kb-assets/` e `/kb-admin/`. Para corrigir, recarregue o nginx do NGPM sem derrubá-lo:
+
+```bash
+docker exec $(docker ps -q -f name=ngpm_ngpm) nginx -s reload
+```
+
 ## Variáveis (opcionais, no `docker/.env`)
 
 | Variável | Padrão | Uso |
