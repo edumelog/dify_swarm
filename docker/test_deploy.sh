@@ -481,6 +481,17 @@ test_stack_postgres_start_period() {
   check "db_postgres com start_period de 5m" "$(awk '/^  db_postgres:/{f=1} f&&/start_period/{print; exit}' "${SCRIPT_DIR}/docker-stack.yml" | grep -q "start_period: 5m"; echo $?)"
 }
 
+# test_env_example_ending_with_comment: .env.example terminado em comentário não derruba o script.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_env_example_ending_with_comment() {
+  local env="${WORK_DIR}/ok.env" example="${WORK_DIR}/env.example.comment"
+  make_env "${env}"
+  { cat "${WORK_DIR}/env.example"; echo "# comentário final"; } > "${example}"
+  MOCK_LOG="${WORK_DIR}/docker.log" OUT="$(printf '\nn\n' | ENV_FILE="${env}" ENV_EXAMPLE="${example}" \
+    bash "${DEPLOY}" --swarm 2>&1)"
+  check "aceita .env.example terminado em comentário" "$(grep -q "Variáveis do .* conferidas" <<<"${OUT}"; echo $?)"
+}
+
 # test_kb_admin_build_failure: falha no build do kb_admin interrompe o deploy com mensagem.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_kb_admin_build_failure() {
@@ -556,6 +567,7 @@ test_waits_for_migration
 test_waits_for_lock_and_replicas
 test_wait_timeout_message
 test_stack_postgres_start_period
+test_env_example_ending_with_comment
 test_kb_admin_build_failure
 test_compose_deploy
 test_mode_question_requires_answer

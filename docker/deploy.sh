@@ -88,7 +88,9 @@ load_env_file() {
   local -n target="$2"
   local line
   while IFS= read -r line || [[ -n "${line}" ]]; do
-    [[ "${line}" =~ ${ENV_LINE_PATTERN} ]] && target["${line%%=*}"]="${line#*=}"
+    if [[ "${line}" =~ ${ENV_LINE_PATTERN} ]]; then
+      target["${line%%=*}"]="${line#*=}"
+    fi
   done < "$1"
 }
 
