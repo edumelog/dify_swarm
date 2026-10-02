@@ -227,13 +227,17 @@ class ManualStore:
         with self._lock(slug):
             suffix = secrets.token_hex(6)
             images_tmp = self._assets_dir / f".{slug}.tmp-{suffix}"
-            images_tmp.mkdir()
-            for name in package.images:
-                shutil.copyfile(package.images_dir / name, images_tmp / name)
-                os.chmod(images_tmp / name, FILE_MODE)
-            os.chmod(images_tmp, DIR_MODE)
-            meta = ManualMeta(slug, self._clock(), user_email, package.images, package.warnings)
             manual_tmp = self._manuals_dir / f".{slug}.tmp-{suffix}"
+            try:
+                self._stage_images(package, images_tmp)
+            except FileNotFoundError as exc:
+                # Os arquivos do envio sumiram (ex.: clique duplo em "Confirmar" já publicou e descartou o envio).
+                shutil.rmtree(images_tmp, ignore_errors=True)
+                raise PendingUploadError(PENDING_NOT_FOUND) from exc
+            except BaseException:
+                shutil.rmtree(images_tmp, ignore_errors=True)
+                raise
+            meta = ManualMeta(slug, self._clock(), user_email, package.images, package.warnings)
             manual_tmp.mkdir()
             (manual_tmp / f"{slug}.md").write_text(package.markdown, encoding="utf-8")
             meta_data = {
@@ -247,6 +251,14 @@ class ManualStore:
             _swap_dir(self._assets_dir / slug, images_tmp, suffix)
             _swap_dir(self._manuals_dir / slug, manual_tmp, suffix)
         return meta
+
+    def _stage_images(self, package: ManualPackage, images_tmp: Path) -> None:
+        """Copia as imagens do envio para a pasta temporária. Entrada: pacote e pasta nova. Saída: arquivos gravados."""
+        images_tmp.mkdir()
+        for name in package.images:
+            shutil.copyfile(package.images_dir / name, images_tmp / name)
+            os.chmod(images_tmp / name, FILE_MODE)
+        os.chmod(images_tmp, DIR_MODE)
 
     def delete(self, slug: str) -> None:
         """Apaga imagens e .md do manual. Entrada: slug. Saída: nenhuma; ManualNotFoundError se não existir."""

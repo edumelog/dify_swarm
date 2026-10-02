@@ -181,3 +181,13 @@ def test_meta_file_format(store: ManualStore, tmp_path: Path) -> None:
         "images": ["tela.png"],
         "warnings": [],
     }
+
+
+def test_publish_with_vanished_files_cleans_up(store: ManualStore, tmp_path: Path) -> None:
+    """Se os arquivos do envio sumiram (clique duplo em confirmar), publicar dá 'envio não encontrado' sem deixar sobras."""
+    package = make_package(tmp_path)
+    (package.images_dir / "tela.png").unlink()
+    with pytest.raises(PendingUploadError):
+        store.publish(package, "ana@camara.rj")
+    assert list((tmp_path / "assets").iterdir()) == []
+    assert list((tmp_path / "data/manuals").iterdir()) == []
