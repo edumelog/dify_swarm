@@ -223,6 +223,37 @@ test_weaviate_mismatch() {
   check "mensagem cita o Weaviate" "$(grep -q "WEAVIATE" <<<"${OUT}"; echo $?)"
 }
 
+# test_broker_follows_redis_password: o CELERY_BROKER_URL do Redis da stack recebe a REDIS_PASSWORD.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_broker_follows_redis_password() {
+  local env="${WORK_DIR}/broker.env"
+  rm -f "${WORK_DIR}"/broker.env.bak.*
+  make_env "${env}" "CELERY_BROKER_URL=redis://:difyai123456@redis:6379/1"
+  run_deploy "${env}" "\nn\n" --swarm
+  check "broker usa a REDIS_PASSWORD" "$([[ "$(env_value "${env}" CELERY_BROKER_URL)" == "redis://:real-redis@redis:6379/1" ]]; echo $?)"
+  check "avisa a troca do broker" "$(grep -q "CELERY_BROKER_URL" <<<"${OUT}"; echo $?)"
+  check "não exibe a senha do Redis" "$(! grep -qF "real-redis" <<<"${OUT}"; echo $?)"
+  check "faz backup ao trocar o broker" "$(ls "${env}".bak.* >/dev/null 2>&1; echo $?)"
+
+  make_env "${env}" "REDIS_PASSWORD=difyai123456" "CELERY_BROKER_URL=redis://:difyai123456@redis:6379/1"
+  run_deploy "${env}" "g\n\nn\n" --swarm
+  check "broker recebe a REDIS_PASSWORD gerada" "$([[ "$(env_value "${env}" CELERY_BROKER_URL)" == "redis://:$(env_value "${env}" REDIS_PASSWORD)@redis:6379/1" ]]; echo $?)"
+}
+
+# test_external_broker_untouched: broker fora do Redis da stack, ou já alinhado, não é alterado.
+# Entrada: nenhuma. Saída: registra asserções via check.
+test_external_broker_untouched() {
+  local env="${WORK_DIR}/ext-broker.env"
+  rm -f "${WORK_DIR}"/ext-broker.env.bak.*
+  make_env "${env}" "CELERY_BROKER_URL=redis://:outra@redis.externo:6379/1"
+  run_deploy "${env}" "\nn\n" --swarm
+  check "mantém broker externo" "$([[ "$(env_value "${env}" CELERY_BROKER_URL)" == "redis://:outra@redis.externo:6379/1" ]]; echo $?)"
+
+  make_env "${env}" "CELERY_BROKER_URL=redis://:real-redis@redis:6379/1"
+  run_deploy "${env}" "\nn\n" --swarm
+  check "broker alinhado não gera backup" "$(! ls "${env}".bak.* >/dev/null 2>&1; echo $?)"
+}
+
 # test_mixed_origins_warns: URLs públicas com origens diferentes geram aviso, não erro.
 # Entrada: nenhuma. Saída: registra asserções via check.
 test_mixed_origins_warns() {
@@ -486,6 +517,8 @@ test_cancel_secrets
 test_fill_urls
 test_postgres_volume_warning
 test_weaviate_mismatch
+test_broker_follows_redis_password
+test_external_broker_untouched
 test_mixed_origins_warns
 test_swarm_deploy
 test_swarm_cancel

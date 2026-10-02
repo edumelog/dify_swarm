@@ -50,6 +50,8 @@ PUBLIC_URL_VARS=("${REQUIRED_URL_VARS[@]}" SERVICE_API_URL)
 # As duas chaves do Weaviate precisam ser iguais: a segunda sempre recebe o valor da primeira.
 WEAVIATE_KEY="WEAVIATE_API_KEY"
 WEAVIATE_ALLOWED_KEYS="WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS"
+# Broker do Celery no Redis da stack (host `redis`): usuário, senha e o resto da URL.
+STACK_BROKER_PATTERN='^redis://([^:@/]*):([^@]*)@(redis:[0-9]+(/.*)?)$'
 
 declare -A ENV_VALUES=()
 declare -A EXAMPLE_VALUES=()
@@ -207,6 +209,15 @@ fill_secrets() {
     set_update "${var}" "${value}"
     [[ "${var}" != "${WEAVIATE_KEY}" ]] || set_update "${WEAVIATE_ALLOWED_KEYS}" "${value}"
   done
+}
+
+# sync_celery_broker: alinha a senha do CELERY_BROKER_URL à REDIS_PASSWORD quando o broker é o Redis da stack.
+# Entrada: ENV_VALUES carregado (após fill_secrets). Saída: UPDATES com o broker corrigido e aviso em stderr, se divergir.
+sync_celery_broker() {
+  local url="${ENV_VALUES[CELERY_BROKER_URL]:-}" password="${ENV_VALUES[REDIS_PASSWORD]:-}"
+  [[ "${url}" =~ ${STACK_BROKER_PATTERN} && "${BASH_REMATCH[2]}" != "${password}" ]] || return 0
+  set_update CELERY_BROKER_URL "redis://${BASH_REMATCH[1]}:${password}@${BASH_REMATCH[3]}"
+  echo "CELERY_BROKER_URL passa a usar a REDIS_PASSWORD (a senha embutida era outra e o Celery não autenticaria no Redis)." >&2
 }
 
 # fill_urls: pede no terminal as URLs públicas obrigatórias que estão vazias.
@@ -487,6 +498,7 @@ main() {
   load_env_file "${ENV_FILE}" ENV_VALUES
   load_env_file "${ENV_EXAMPLE}" EXAMPLE_VALUES
   fill_secrets
+  sync_celery_broker
   fill_urls
   if [[ -z "${mode}" ]]; then
     mode="$(ask_swarm_mode)" || exit 1
