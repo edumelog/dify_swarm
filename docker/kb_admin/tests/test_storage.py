@@ -179,4 +179,5 @@ def test_meta_file_format(store: ManualStore, tmp_path: Path) -> None:
         "published_at": "2026-10-02T12:00:00+00:00",
         "published_by": "ana@camara.rj",
         "images": ["tela.png"],
+        "warnings": [],
     }

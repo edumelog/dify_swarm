@@ -148,3 +148,10 @@ def test_confirm_with_bad_token(logged_client: TestClient) -> None:
     )
     assert response.status_code == 400
     assert "Envio não encontrado" in response.text
+
+
+def test_new_manual_shows_package_warnings(logged_client: TestClient) -> None:
+    """Avisos do pacote (ex.: imagem não citada) aparecem também quando o manual é novo."""
+    response = upload(logged_client, manual_files(images=("tela.png", "sobra.png")))
+    page = logged_client.get(response.headers["location"]).text
+    assert "imagem não citada no .md (não será publicada): sobra.png" in page

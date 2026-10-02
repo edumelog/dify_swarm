@@ -41,6 +41,7 @@ class ManualMeta:
     published_at: datetime
     published_by: str
     images: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ class ManualStore:
             published_at=datetime.fromisoformat(data["published_at"]),
             published_by=data["published_by"],
             images=tuple(data["images"]),
+            warnings=tuple(data.get("warnings", [])),
         )
 
     def exists(self, slug: str) -> bool:
@@ -230,7 +232,7 @@ class ManualStore:
                 shutil.copyfile(package.images_dir / name, images_tmp / name)
                 os.chmod(images_tmp / name, FILE_MODE)
             os.chmod(images_tmp, DIR_MODE)
-            meta = ManualMeta(slug, self._clock(), user_email, package.images)
+            meta = ManualMeta(slug, self._clock(), user_email, package.images, package.warnings)
             manual_tmp = self._manuals_dir / f".{slug}.tmp-{suffix}"
             manual_tmp.mkdir()
             (manual_tmp / f"{slug}.md").write_text(package.markdown, encoding="utf-8")
@@ -239,6 +241,7 @@ class ManualStore:
                 "published_at": meta.published_at.isoformat(),
                 "published_by": meta.published_by,
                 "images": list(meta.images),
+                "warnings": list(meta.warnings),
             }
             (manual_tmp / META_FILE).write_text(json.dumps(meta_data, ensure_ascii=False, indent=2), encoding="utf-8")
             _swap_dir(self._assets_dir / slug, images_tmp, suffix)

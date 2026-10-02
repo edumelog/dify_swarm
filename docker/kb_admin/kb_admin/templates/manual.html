@@ -6,6 +6,9 @@
 <div class="msg warn">Pasta publicada fora da interface (sem .md): não há .md para baixar nem parâmetros. Reenvie o manual como zip para gerenciá-lo aqui.</div>
 {% else %}
 <p>Publicado em {{ meta.published_at | local_datetime }} por {{ meta.published_by }}.</p>
+{% if meta.warnings %}
+<div class="msg warn"><strong>Avisos do pacote:</strong><ul>{% for warning in meta.warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+{% endif %}
 {% endif %}
 <div class="actions">
   {% if not legacy %}
