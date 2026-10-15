@@ -51,8 +51,9 @@ o que é próprio do projeto; a documentação original do Dify está no
   - modo claro e escuro.
 - **Relay para modelo local** (`llm-relay.sh`): deixa o Dify usar um modelo que roda no próprio
   host (ex.: llama.cpp no Windows), em Swarm ou Compose.
-- **Integração com outras stacks** (ex.: n8n): os workflows chamam serviços da rede do NGPM pelo
-  nome (`http://<stack>_<serviço>:<porta>`), sem precisar de DNS (seção 2).
+- **Integração com outras stacks** (ex.: n8n), nos dois sentidos e sem precisar de DNS: os
+  workflows do Dify chamam serviços da rede do NGPM pelo nome, e as outras stacks chamam a API do
+  Dify por `http://dify_nginx/v1` (seção 2).
 - **Prompt de conversão `PDF_TO_RAG.md`**: instruções para uma LLM externa transformar um PDF
   no pacote `.zip` aceito pelo `kb_admin`.
 
@@ -80,6 +81,24 @@ que o Dify chame outras stacks pelo nome do serviço, sem depender de DNS: em ho
 domínios (ex.: `n8n.hmg.dti`) só existem no hosts de quem navega, e o squid não os resolve
 (`ERR_DNS_FAIL`). Exemplo no nó HTTP Request, para a stack `n8n_hmg`:
 `http://n8n_hmg_n8n:5678/webhook/<id>` (use `/webhook-test/` só com o editor do n8n escutando).
+
+### Integração com outras stacks (ex.: n8n)
+
+Serviços na rede do NGPM se alcançam pelo nome completo `<stack>_<serviço>`, em HTTP e sem passar
+pelo NGPM (sem DNS e sem certificado). Os domínios públicos não funcionam de dentro dos containers
+em homologação.
+
+| Sentido | URL | Observações |
+|---|---|---|
+| Dify → n8n (nó HTTP Request) | `http://n8n_hmg_n8n:5678/webhook/<id>` | Workflow do n8n ativo; `/webhook-test/` vale para uma chamada após **Execute workflow** |
+| n8n → Dify (Service API) | `http://dify_nginx/v1/...` (ex.: `POST http://dify_nginx/v1/chat-messages`) | Cabeçalho `Authorization: Bearer app-...` (chave em *Acesso à API* do app) |
+
+- Use sempre o nome completo (`dify_nginx`, não `nginx`): outras stacks na mesma rede têm
+  apelidos curtos parecidos (ex.: `siafic-api_api` responde como `api`).
+- Os nomes dependem da stack: com `STACK_NAME=dify-hmg`, o Dify vira `dify-hmg_nginx`; a stack
+  do n8n em produção também terá outro nome.
+- URLs de arquivos devolvidas pelo Dify (imagens, anexos) usam o domínio público (`FILES_URL`).
+  Para baixá-las de dentro de outra stack, troque o início da URL por `http://dify_nginx`.
 
 ## 3. Pré-requisitos
 
