@@ -51,6 +51,8 @@ o que é próprio do projeto; a documentação original do Dify está no
   - modo claro e escuro.
 - **Relay para modelo local** (`llm-relay.sh`): deixa o Dify usar um modelo que roda no próprio
   host (ex.: llama.cpp no Windows), em Swarm ou Compose.
+- **Integração com outras stacks** (ex.: n8n): os workflows chamam serviços da rede do NGPM pelo
+  nome (`http://<stack>_<serviço>:<porta>`), sem precisar de DNS (seção 2).
 - **Prompt de conversão `PDF_TO_RAG.md`**: instruções para uma LLM externa transformar um PDF
   no pacote `.zip` aceito pelo `kb_admin`.
 
@@ -70,8 +72,14 @@ dify_kb_admin ──escreve──> volume dify_kb_admin_data (.md originais, doc
 
 Serviços da stack `dify`: `api`, `worker`, `worker_beat`, `web`, `nginx`, `db_postgres`, `redis`,
 `weaviate`, `sandbox`, `ssrf_proxy`, `plugin_daemon`, `init_permissions` (tarefa única),
-`kb_assets` e `kb_admin`. Só o `nginx`, o `kb_assets` e o `kb_admin` ficam na rede do NGPM;
-nenhum serviço publica porta no host.
+`kb_assets` e `kb_admin`. Só o `nginx`, o `kb_assets`, o `kb_admin` e o `ssrf_proxy` ficam na
+rede do NGPM; nenhum serviço publica porta no host.
+
+O `ssrf_proxy` (squid) é a saída das requisições HTTP dos workflows. Ele fica na rede do NGPM para
+que o Dify chame outras stacks pelo nome do serviço, sem depender de DNS: em homologação os
+domínios (ex.: `n8n.hmg.dti`) só existem no hosts de quem navega, e o squid não os resolve
+(`ERR_DNS_FAIL`). Exemplo no nó HTTP Request, para a stack `n8n_hmg`:
+`http://n8n_hmg_n8n:5678/webhook/<id>` (use `/webhook-test/` só com o editor do n8n escutando).
 
 ## 3. Pré-requisitos
 
